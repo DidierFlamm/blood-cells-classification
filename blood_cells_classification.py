@@ -55,7 +55,7 @@ from sklearn.model_selection import (
     StratifiedKFold,
     GridSearchCV,
     RandomizedSearchCV)
-from sklearn.metrics import accuracy_score, classification_report, log_loss
+from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, log_loss
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.calibration import CalibratedClassifierCV
@@ -106,7 +106,7 @@ SAVE_RES = False  # default = False
 SAVE_SUB = False  # default = False
 LOAD_RES = True  # default = False
 
-SAMPLE_SIZE = 1000  # default = 2500 : sub-dataset used for debugging
+SAMPLE_SIZE = 2500  # default = 2500 : sub-dataset used for debugging
 PERF_ML = True  # default = True
 TUNE_RF = True  # default = True
 TUNE_XGB = True  # default = True
@@ -1194,14 +1194,15 @@ class ImagesBinarizer:
 
 
 # %%
-def evaluate_ML_global(models, datasets, verbose: bool = True) -> pd.DataFrame:
+def evaluate_ML_global(
+    models, datasets, balanced_weights: bool = False, verbose: bool = True
+) -> pd.DataFrame:
 
     global_start_time = time.perf_counter()
 
     # paramètres pour tous les modèles : standardization et encoding (pour homogénéiser le fit et predict même si ce n'est pas idéal)
     scale = True  # Tree-base models doesn't need scaling (RF, XGB, CAT, LGB). NB: KNN may work better with normalization instead of standardization
     encode = True  # encoding is mandatory only for XGB
-    balanced_weights = True
 
     global_perf = pd.DataFrame()
 
@@ -1219,37 +1220,37 @@ def evaluate_ML_global(models, datasets, verbose: bool = True) -> pd.DataFrame:
 
         dataset_models = []
         dataset_accuracies = []
+        dataset_bal_accuracies = []
         dataset_durations = []
 
         for model in models:
 
             start_time = time.perf_counter()
-            if encode:
-                accuracy, _ = evaluate_ML_model(model, X_train_flat, X_valid_flat, y_train, y_valid, flatten, scale, encode, balanced_weights, verbose)  # type: ignore
-            else:
-                accuracy = evaluate_ML_model(
-                    model,
-                    X_train_flat,
-                    X_valid_flat,
-                    y_train,
-                    y_valid,
-                    flatten,
-                    scale,
-                    encode,
-                    balanced_weights,
-                    verbose,
-                )
+            accuracy, bal_accuracy = evaluate_ML_model(
+                model,
+                X_train_flat,
+                X_valid_flat,
+                y_train,
+                y_valid,
+                flatten,
+                scale,
+                encode,
+                balanced_weights,
+                verbose,
+            )
             end_time = time.perf_counter()
 
             duration = round(end_time - start_time, 3)
             dataset_models.append(model.__class__.__name__)
             dataset_accuracies.append(accuracy)
+            dataset_bal_accuracies.append(bal_accuracy)
             dataset_durations.append(duration)
 
         dataset_perf = pd.DataFrame(
             {
                 "Model": dataset_models,
                 "Accuracy": dataset_accuracies,
+                "Balanced accuracy": dataset_bal_accuracies,
                 "Duration (s)": dataset_durations,
             }
         ).set_index("Model")
@@ -1269,18 +1270,21 @@ def evaluate_ML_global(models, datasets, verbose: bool = True) -> pd.DataFrame:
 
     # Add Col Mean
 
-    # Sélection des colonnes paires et impaires (par position)
-    cols_paires = global_perf.columns[::2]  # type: ignore
-    cols_impaires = global_perf.columns[1::2]  # type: ignore
+    # Sélection des colonnes acc, bal_acc et durations
+    cols_acc = global_perf.columns[::3]  # type: ignore
+    cols_bal_acc = global_perf.columns[1::3]
+    cols_dur = global_perf.columns[2::3]  # type: ignore
 
     # Calcul des moyennes par ligne
-    mean_accuracy = global_perf[cols_paires].mean(axis=1)  # type: ignore
-    mean_duration = global_perf[cols_impaires].mean(axis=1)  # type: ignore
+    mean_accuracy = global_perf[cols_acc].mean(axis=1)  # type: ignore
+    mean_bal_accuracy = global_perf[cols_bal_acc].mean(axis=1)
+    mean_duration = global_perf[cols_dur].mean(axis=1)  # type: ignore
 
     # Création des nouvelles colonnes sous forme de DataFrame avec MultiIndex colonnes
     new_cols = pd.DataFrame(
         {
             ("📊 Average", "Accuracy"): mean_accuracy,
+            ("📊 Average", "Balanced accuracy"): mean_bal_accuracy,
             ("📊 Average", "Duration (s)"): mean_duration,
         },
         index=global_perf.index,
@@ -1291,8 +1295,8 @@ def evaluate_ML_global(models, datasets, verbose: bool = True) -> pd.DataFrame:
 
     # Arrondi selon colonne accuracy ou duration
     for idx, col in enumerate(global_perf.columns):
-        if idx % 2 == 0:
-            global_perf[col] = global_perf[col].round(3)  # accuracy
+        if idx % 3 in [0, 1]:
+            global_perf[col] = global_perf[col].round(3)  # accuracy or bal_accuracy
         else:
             global_perf[col] = global_perf[col].round(0).astype("Int64")  # duration
 
@@ -1322,7 +1326,7 @@ def evaluate_ML_model(
     encode: bool = True,
     balanced_weights: bool = False,
     verbose: bool = True,
-) -> float:
+) -> Tuple[float, float]:
     """
     Evaluate a classical ML classifier (e.g., SVM, KNN, RandomForest, XGBoost).
 
@@ -1354,8 +1358,9 @@ def evaluate_ML_model(
 
     Returns
     -------
-    float
-        Accuracy score on the validation set.
+    tuple of float
+    (accuracy, balanced_accuracy)
+    Accuracy score and balanced accuracy score on the validation set.
     """
 
     if flatten:
@@ -1365,48 +1370,54 @@ def evaluate_ML_model(
         X_train_flat = np.asarray(X_train)
         X_valid_flat = np.asarray(X_valid)
 
-    if scale:  # toujours scale
-        scaler = (
-            StandardScaler()
-        )  # NB1 : tree-based (RandomForest, XGBoost…) n’ont pas besoin de scaling mais le scaling est inoffensif
-        X_train_flat = scaler.fit_transform(
-            X_train_flat
-        )  # NB2 : KNN peut fonctionner mieux avec une normalisation (MinMaxScaler) plutôt que standardisation...
+    if scale:
+        scaler = StandardScaler()
+        X_train_flat = scaler.fit_transform(X_train_flat)
         X_valid_flat = scaler.transform(X_valid_flat)
+    # NB1 : tree-based (RandomForest, XGBoost…) n’ont pas besoin de scaling mais le scaling est inoffensif
+    # NB2 : KNN peut fonctionner mieux avec une normalisation (MinMaxScaler) plutôt que standardisation...
 
     if encode:
         encoder = LabelEncoder()
-        y_train = encoder.fit_transform(y_train)
-        # pas besoin d'encoder y_valid car y_pred sera inverse_transform
+        encoder.fit(np.concatenate([y_train, y_valid]))  # sécurise l'encodage
+        y_train_enc = encoder.transform(y_train)
+        y_valid_enc = encoder.transform(y_valid)
+    else:
+        y_train_enc = y_train.copy()
+        y_valid_enc = y_valid.copy()
+        # inutile mais peut éviter des effets de bord si la fonction évolue
 
     if verbose:
         print(clf)
         start_time = time.perf_counter()  # start timing prediction
 
-    if (
-        balanced_weights and "sample_weight" in inspect.signature(clf.fit).parameters
-    ):  # vérifie que le param balanced_weights = True + que le classifier accepte sample_weight dans son fit
+    if balanced_weights and "sample_weight" in inspect.signature(clf.fit).parameters:
+        # vérifie que le param balanced_weight        y_valid_decoded = encoder.inverse_transform(y_valid_enc)s = True + que le classifier accepte sample_weight dans son fit
         sample_weights = compute_sample_weight("balanced", y_train)
-        clf.fit(X_train, y_train, sample_weight=sample_weights)
+        clf.fit(X_train_flat, y_train_enc, sample_weight=sample_weights)
     else:
-        clf.fit(X_train, y_train)
+        clf.fit(X_train_flat, y_train_enc)
 
-    y_pred = clf.predict(X_valid_flat)
+    y_pred_enc = clf.predict(X_valid_flat)
+
+    accuracy = accuracy_score(y_valid_enc, y_pred_enc)
+    balanced_accuracy = balanced_accuracy_score(y_valid_enc, y_pred_enc)
 
     if encode:
-        y_pred = encoder.inverse_transform(y_pred)  # type: ignore
-
-    accuracy = accuracy_score(y_valid, y_pred)
+        y_pred = encoder.inverse_transform(y_pred_enc)  # type: ignore
+    else:
+        y_pred = y_pred_enc
 
     if verbose:
         print("accuracy:", accuracy)
+        print("balanced accuracy:", balanced_accuracy)
         end_time = time.perf_counter()  # end timing
         predict_time = end_time - start_time  # type: ignore # durée en secondes
         print(f"duration: {predict_time:.3f} s\n")
         display(pd.crosstab(y_valid, y_pred))
         print(classification_report(y_valid, y_pred))
 
-    return float(accuracy)
+    return float(accuracy), float(balanced_accuracy)
     # convertit accuracy en float pour éviter une erreur de type entre Float et float...
 
 
@@ -1822,7 +1833,7 @@ names_bin_test = names_res_test
 # # Machine Learning
 
 # %% [markdown] id="46Wk4R3e7c3s"
-# ## Evaluate ML models and datasets
+# ## Evaluate performance
 
 # %% [markdown]
 # TODO : early_stopping_rounds pour XGB, CAT et LGBM à 5 ou 10 et remettre iterator par défaut !?
@@ -1853,7 +1864,7 @@ XGB = XGBClassifier(
     n_estimators=20,  # default = 100
     n_jobs=n_jobs,
     tree_method="hist",
-    device="cuda",
+    device="cuda",  # or cuda for gpu
     random_state=random_state,
 )
 
@@ -1880,7 +1891,7 @@ LGBM = LGBMClassifier(
 # ### Select models
 
 # %%
-models = [RF, KNN, XGB]  # default : models = [RF, SVM, KNN, XGB, CAT, LGBM]
+models = [RF, KNN, XGB]  # default : models = [RF, SVM, KNN, XGB, LGBM, CAT]
 
 
 # %% [markdown]
@@ -1889,8 +1900,6 @@ models = [RF, KNN, XGB]  # default : models = [RF, SVM, KNN, XGB, CAT, LGBM]
 # %%
 RES = (X_res_train, X_res_valid, y_res_train, y_res_valid, "Resized")
 SAM = (X_sample_train, X_sample_valid, y_sample_train, y_sample_valid, "Sample")
-ROS = (X_ros_train, X_ros_valid, y_ros_train, y_ros_valid, "Over Sampled")
-RUS = (X_rus_train, X_rus_valid, y_rus_train, y_rus_valid, "Under Sampled")
 BIN = (X_bin_train, X_bin_valid, y_bin_train, y_bin_valid, "Binarized")
 
 
@@ -1898,7 +1907,7 @@ BIN = (X_bin_train, X_bin_valid, y_bin_train, y_bin_valid, "Binarized")
 # ### Select datasets
 
 # %%
-datasets = [SAM, RES, BIN]  # default = [SAM, RES, ROS, RUS, BIN]
+datasets = [BIN]  # default = [RES, SAM, BIN]
 
 
 # %% [markdown]
@@ -1906,7 +1915,9 @@ datasets = [SAM, RES, BIN]  # default = [SAM, RES, ROS, RUS, BIN]
 
 # %%
 if PERF_ML:
-    ML_global_perf = evaluate_ML_global(models, datasets, verbose)
+    ML_global_perf = evaluate_ML_global(
+        models, datasets, balanced_weights=True, verbose=True
+    )
 
 
 # %% [markdown] editable=true slideshow={"slide_type": ""}

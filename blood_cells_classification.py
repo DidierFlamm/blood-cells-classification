@@ -2294,7 +2294,8 @@ if TUNE_XGB:
         ],  # 6 Gain minimal pour scinder un nœud: 0 ou 1 (régularisation légère)
     }
 
-    dtrain = xgb.DMatrix(X_flat, label=y_enc)
+    weights = compute_sample_weight("balanced", y_enc)
+    dtrain = xgb.DMatrix(X_flat, label=y_enc, weight=weights)
 
     num_boost_round = 5  # 50 ou 100
     nfold = 3  # ou 5
@@ -2424,7 +2425,7 @@ if TUNE_XGB:
 
     # Sauvegarder le modèle non fitted
     best_xgb.set_params(n_jobs=1)
-    best_xgb.set_params(device="cuda")
+    # best_xgb.set_params(device="cuda")
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
     joblib.dump(best_xgb, path)
 
@@ -2472,13 +2473,11 @@ if CALIB:
 # ### XGBoost
 
 # %%
-if not CALIB:
+if CALIB:
 
     # charger
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
     best_xgb = joblib.load(path)
-
-    best_xgb.set_params(device="cpu")
 
     model = clone(best_xgb)
     print(model)
@@ -2494,11 +2493,8 @@ if not CALIB:
 
 
 
-# %% [markdown]
-# avec StratifiedKFold
-
 # %%
-if CALIB:
+if not CALIB:
 
     # charger
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_fitted_train_v1.joblib")
@@ -2515,7 +2511,7 @@ if CALIB:
 
     y_res_valid_encoded = encoder.transform(y_res_valid)
 
-    sample_weights = compute_sample_weight("balanced", y_res_train_encoded)
+    sample_weights = compute_sample_weight("balanced", y_res_valid_encoded)
     calibrated_xgb.fit(
         X_res_valid_flat, y_res_valid_encoded, sample_weight=sample_weights
     )
@@ -2524,6 +2520,9 @@ if CALIB:
     path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
     joblib.dump(calibrated_xgb, path)
 
+
+# %% [markdown]
+# avec StratifiedKFold
 
 # %%
 """
@@ -2680,7 +2679,8 @@ if FINAL_TRAIN:
     model = clone(best_rf_grid_cv)
     print(model)
 
-    model.fit(X_res_flat, y_res_encoded)
+    sample_weights = compute_sample_weight("balanced", y_res_encoded)
+    model.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
 
     # sauvegarder le modèle non calibré
     path = os.path.join(PATH_JOBLIB, "rf_final_fitted_all_v1.joblib")
@@ -2695,7 +2695,8 @@ if FINAL_TRAIN:
         cv=None,
         n_jobs=n_jobs,
     )
-    calibrated_rf.fit(X_res_flat, y_res_encoded)
+
+    calibrated_rf.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
 
     # sauvegarder le modèle calibré
     path = os.path.join(PATH_JOBLIB, "rf_final_calibrated_sigmoid_all_v1.joblib")
@@ -2725,7 +2726,8 @@ if FINAL_TRAIN:
     model = clone(best_xgb)
     print(model)
 
-    model.fit(X_res_flat, y_res_encoded)
+    sample_weights = compute_sample_weight("balanced", y_res_encoded)
+    model.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
 
     # sauvegarder le modèle entraîné mais non calibré
     path = os.path.join(PATH_JOBLIB, "xgb_final_fitted_all_v1.joblib")
@@ -2740,7 +2742,7 @@ if FINAL_TRAIN:
         cv=None,
         n_jobs=n_jobs,
     )
-    calibrated_xgb.fit(X_res_flat, y_res_encoded)
+    calibrated_xgb.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
 
     # sauvegarder le modèle calibré
     path = os.path.join(PATH_JOBLIB, "xgb_final_calibrated_sigmoid_all_v1.joblib")

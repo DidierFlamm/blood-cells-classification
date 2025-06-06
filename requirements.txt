@@ -1,0 +1,17 @@
+catboost
+imbalanced_learn
+ipython
+joblib
+lightgbm
+matplotlib
+numpy
+pandas
+Pillow
+scikit_learn
+scipy
+seaborn
+skimage
+squarify
+tensorflow
+tqdm
+xgboost

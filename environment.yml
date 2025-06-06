@@ -1,0 +1,26 @@
+name: py312
+channels:
+  - defaults
+dependencies:
+  - python=3.12.9
+  - catboost
+  - cudatoolkit
+  - joblib
+  - tqdm
+  - squarify
+  - matplotlib
+  - seaborn
+  - tensorflow
+  - lightgbm
+  - ipython
+  - pandas
+  - scipy
+  - pillow
+  - numpy
+  - py-xgboost-gpu
+  - ipykernel
+  - opencv
+  - imbalanced-learn
+  - scikit-image
+  - jupyter
+prefix: /home/did/miniconda3/envs/py312

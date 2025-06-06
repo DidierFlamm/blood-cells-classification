@@ -2486,7 +2486,7 @@ if not CALIB:
     y_res_train_encoded = encoder.transform(y_res_train)
 
     sample_weights = compute_sample_weight("balanced", y_res_train_encoded)
-    model.fit(X_res_train_flat, y_res_train_encoded, sample_weights=sample_weights)
+    model.fit(X_res_train_flat, y_res_train_encoded, sample_weight=sample_weights)
 
     # sauvegarder
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_fitted_train_v1.joblib")
@@ -2514,7 +2514,11 @@ if CALIB:
     )
 
     y_res_valid_encoded = encoder.transform(y_res_valid)
-    calibrated_xgb.fit(X_res_valid_flat, y_res_valid_encoded)
+
+    sample_weights = compute_sample_weight("balanced", y_res_train_encoded)
+    calibrated_xgb.fit(
+        X_res_valid_flat, y_res_valid_encoded, sample_weight=sample_weights
+    )
 
     # sauvegarder
     path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")

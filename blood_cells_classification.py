@@ -1842,10 +1842,10 @@ names_bin_valid = names_res_valid
 names_bin_test = names_res_test
 
 # %% [markdown] id="boj16iBu7XqO"
-# # III. Machine Learning
+# # Machine Learning
 
 # %% [markdown] id="46Wk4R3e7c3s"
-# ## 1. Evaluate ML models and datasets
+# ## Evaluate ML models and datasets
 
 # %% [markdown]
 # TODO : early_stopping_rounds pour XGB, CAT et LGBM à 5 ou 10 et remettre iterator par défaut !?
@@ -1854,21 +1854,26 @@ names_bin_test = names_res_test
 # TODO : ajouter dataset réduction de dimension par PCA
 
 # %% [markdown]
-# ### a. Define ML models
+# ### Define ML models
 
 # %% editable=true slideshow={"slide_type": ""}
 # Random Forest
-RF = ensemble.RandomForestClassifier(n_jobs=n_jobs, random_state=random_state)
+RF = ensemble.RandomForestClassifier(
+    n_jobs=n_jobs, random_state=random_state, class_weight="balanced_subsample"
+)
+# Note: class_weight='balanced_subsample' est utile si tu as un fort déséquilibre
+#  et que tu veux que chaque arbre "voit" un équilibre adapté à son propre échantillon.
+# Pour la plupart des cas, 'balanced' suffit et est plus stable.
 
 # Support Vector Machine
-SVM = SVC(
-    random_state=random_state
-)  # le paramètre n_jobs n'existe pas dans SVC car il utilise un seul cœur CPU
+SVM = SVC(class_weight="balanced", random_state=random_state)
+# le paramètre n_jobs n'existe pas dans SVC car il utilise un seul cœur CPU
 
 # k-Nearest Neighbors
-KNN = KNeighborsClassifier(
-    n_jobs=n_jobs
-)  # le paramètre random_state n'existe pas dans KNN car c’est un algorithme non probabiliste et déterministe
+KNN = KNeighborsClassifier(n_jobs=n_jobs)
+# le paramètre random_state n'existe pas dans KNN car c’est un algorithme non probabiliste et déterministe
+# KNN ne propose pas de paramètre class_weight
+
 
 # XGBoost
 XGB = XGBClassifier(
@@ -1900,13 +1905,13 @@ LGBM = LGBMClassifier(
 )
 
 # %% [markdown]
-# ### b. Select models
+# ### Select models
 
 # %%
 models = [RF, KNN, XGB]  # default : models = [RF, SVM, KNN, XGB, CAT, LGBM]
 
 # %% [markdown]
-# ### d. Define datasets
+# ### Define datasets
 
 # %%
 RES = (X_res_train, X_res_valid, y_res_train, y_res_valid, "Resized")
@@ -1916,20 +1921,20 @@ RUS = (X_rus_train, X_rus_valid, y_rus_train, y_rus_valid, "Under Sampled")
 BIN = (X_bin_train, X_bin_valid, y_bin_train, y_bin_valid, "Binarized")
 
 # %% [markdown]
-# ### e. Select datasets
+# ### Select datasets
 
 # %%
 datasets = [SAM, RES, BIN]  # default = [SAM, RES, ROS, RUS, BIN]
 
 # %% [markdown]
-# ### f. Evaluate performances
+# ### Evaluate performances
 
 # %%
 if PERF_ML:
     ML_global_perf = evaluate_ML_global(models, datasets, verbose)
 
 # %% [markdown] editable=true slideshow={"slide_type": ""}
-# ## 2. Fine tuning by Cross Validation
+# ## Fine tuning by Cross Validation
 # Random Forest classifier with Resized dataset
 # XGBoost classifier et LGBM with Binarized dataset
 #
@@ -1958,7 +1963,7 @@ X_sample_train_valid_flat = X_sample_train_valid_flat.astype("float32") / 255.0
 X_sample_train_flat = X_sample_train_flat.astype("float32") / 255.0
 
 # %% [markdown]
-# ### a. Random Forest
+# ### Random Forest
 
 # %% [markdown]
 # #### using RandomizedSearchCV (faster and larger)
@@ -1967,7 +1972,9 @@ X_sample_train_flat = X_sample_train_flat.astype("float32") / 255.0
 # %%
 # start_time = time.perf_counter()
 
-rf = ensemble.RandomForestClassifier(n_jobs=1, random_state=random_state)
+rf = ensemble.RandomForestClassifier(
+    n_jobs=1, random_state=random_state, class_weight="balanced_subsample"
+)
 # n_jobs = 1 car le parallélisme se fera sur le CV
 
 param_dist = {
@@ -1992,7 +1999,7 @@ randomized_CV_RF = RandomizedSearchCV(
     cv=cv,
     n_jobs=n_jobs,
     random_state=random_state,
-    verbose=3 * int(verbose),
+    verbose=int(verbose),
     scoring=scoring,
     refit="neg_log_loss",  # on priorise logloss a accuracy pendant le tuning
 )
@@ -2030,7 +2037,9 @@ if TUNE_RF:
 # %%
 # start_time = time.perf_counter()
 
-rf = ensemble.RandomForestClassifier(n_jobs=1, random_state=random_state)
+rf = ensemble.RandomForestClassifier(
+    n_jobs=1, random_state=random_state, class_weight="balanced_subsample"
+)
 # n_jobs = 1 car le parallélisme se fera sur le CV
 
 """
@@ -2091,7 +2100,7 @@ grid_CV_RF = GridSearchCV(
     refit="neg_log_loss",
     cv=cv,
     n_jobs=n_jobs,
-    verbose=3 * int(verbose),
+    verbose=int(verbose),
 )
 
 if TUNE_RF:
@@ -2124,7 +2133,7 @@ if TUNE_RF:
     joblib.dump(best_rf_grid_cv, path)
 
 # %% [markdown]
-# ### b. XGBoost
+# ### XGBoost
 
 # %% [markdown]
 # #### using RandomizedSearchCV
@@ -2357,11 +2366,11 @@ path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
 joblib.dump(best_xgb, path)
 
 # %% [markdown]
-# ## 4. Entraînement et Calibration par CV avant l'évaluation finale
+# ## Entraînement et Calibration par CV avant l'évaluation finale
 # on Train+Valid sets
 
 # %% [markdown]
-# ### a. Random Forest
+# ### Random Forest
 
 # %%
 # charger
@@ -2389,7 +2398,7 @@ path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib"
 joblib.dump(calibrated_rf, path)
 
 # %% [markdown]
-# ### b. XGBoost
+# ### XGBoost
 
 # %%
 # charger
@@ -2455,11 +2464,11 @@ joblib.dump(calibrated_xgb_cv, path)
 """
 
 # %% [markdown]
-# ## 5. Final evaluation
+# ## Final evaluation
 #  on Test set
 
 # %% [markdown]
-# ### a. Random Forest
+# ### Random Forest
 
 # %%
 # Charger
@@ -2504,7 +2513,7 @@ path = os.path.join(PATH_JOBLIB, "rf_classification_report.csv")
 df_report.to_csv(path)
 
 # %% [markdown]
-# ### b. XGBoost
+# ### XGBoost
 
 # %%
 # Charger
@@ -2547,10 +2556,10 @@ path = os.path.join(PATH_JOBLIB, "xgb_classification_report.csv")
 df_report.to_csv(path)
 
 # %% [markdown]
-# ## 5. Entraînement final sur toutes les données puis calibration
+# ## Entraînement final sur toutes les données puis calibration
 
 # %% [markdown]
-# ### a. Random Forest
+# ### Random Forest
 
 # %%
 # charger
@@ -2591,7 +2600,7 @@ print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
 
 
 # %% [markdown]
-# ### b. XGBoost
+# ### XGBoost
 
 # %%
 # charger

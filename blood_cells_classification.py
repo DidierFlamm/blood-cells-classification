@@ -31,6 +31,7 @@ import os
 from IPython.display import display, HTML
 import random
 from collections import defaultdict, Counter
+import inspect
 from pathlib import Path
 import matplotlib.pyplot as plt
 import squarify
@@ -56,7 +57,7 @@ from sklearn.model_selection import (
     RandomizedSearchCV)
 from sklearn.metrics import accuracy_score, classification_report, log_loss
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.utils.class_weight import compute_class_weight
+from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.frozen import FrozenEstimator
 import xgboost as xgb
@@ -106,7 +107,7 @@ SAVE_SUB = False  # default = False
 LOAD_RES = True  # default = False
 
 SAMPLE_SIZE = 1000  # default = 2500 : sub-dataset used for debugging
-PERF_ML = False  # default = True
+PERF_ML = True  # default = True
 TUNE_RF = True  # default = True
 TUNE_XGB = True  # default = True
 TUNE_LGBM = True  # default = True
@@ -1200,6 +1201,7 @@ def evaluate_ML_global(models, datasets, verbose: bool = True) -> pd.DataFrame:
     # paramètres pour tous les modèles : standardization et encoding (pour homogénéiser le fit et predict même si ce n'est pas idéal)
     scale = True  # Tree-base models doesn't need scaling (RF, XGB, CAT, LGB). NB: KNN may work better with normalization instead of standardization
     encode = True  # encoding is mandatory only for XGB
+    balanced_weights = True
 
     global_perf = pd.DataFrame()
 
@@ -1223,7 +1225,7 @@ def evaluate_ML_global(models, datasets, verbose: bool = True) -> pd.DataFrame:
 
             start_time = time.perf_counter()
             if encode:
-                accuracy, _ = evaluate_ML_model(model, X_train_flat, X_valid_flat, y_train, y_valid, flatten, scale, encode, verbose)  # type: ignore
+                accuracy, _ = evaluate_ML_model(model, X_train_flat, X_valid_flat, y_train, y_valid, flatten, scale, encode, balanced_weights, verbose)  # type: ignore
             else:
                 accuracy = evaluate_ML_model(
                     model,
@@ -1234,6 +1236,7 @@ def evaluate_ML_global(models, datasets, verbose: bool = True) -> pd.DataFrame:
                     flatten,
                     scale,
                     encode,
+                    balanced_weights,
                     verbose,
                 )
             end_time = time.perf_counter()
@@ -1317,34 +1320,42 @@ def evaluate_ML_model(
     flatten: bool = True,
     scale: bool = True,
     encode: bool = True,
+    balanced_weights: bool = False,
     verbose: bool = True,
-) -> Union[float, Tuple[float, LabelEncoder]]:
+) -> float:
     """
-    Fonction d'évaluation pour modèles classiques de ML (SVM, KNN, RF, XGBoost).
-    Ne convient pas pour modèles deep learning.
+    Evaluate a classical ML classifier (e.g., SVM, KNN, RandomForest, XGBoost).
 
-    NB: Standardization (StandardScaler) is preferred for models sensitive to variance (e.g., SVM).
-        Tree-based models (e.g., RandomForest, XGBoost) do not require any scaling.
+    Not designed for deep learning models.
 
     Parameters
     ----------
-    clf : Classifier scikit-learn-compatible
+    clf : sklearn-like classifier
+        The model to train and evaluate.
     X_train, X_valid : array-like
-        Données d'entraînement et de validation (images)
+        Input features (images), optionally flattened and scaled.
     y_train, y_valid : array-like
-        Labels correspondants
-    flatten : bool (True par défaut)
-        Applique un reshape en 2D des ensembles X_train et X_valid
-    scale : bool (True par défaut)
-        Applique un StandardScaler
-    encode : bool (False par défaut)
-        Encode y_train et y_valid et retourne l'encoder
-    verbose : bool (False par défaut)
-        Affiche accuracy_score, la matrice de confusion croisée et le classification_report
+        Ground-truth labels.
+    flatten : bool, default=True
+        Reshapes X into 2D arrays if needed (n_samples, -1).
+    scale : bool, default=True
+        Applies StandardScaler to input features.
+    encode : bool, default=True
+        Encodes y_train using LabelEncoder. y_valid remains untouched.
+    balanced_weights : bool, default=False
+        If True and clf supports `sample_weight`, compute balanced sample weights during fitting.
+    verbose : bool, default=True
+        Displays model info, duration, accuracy, confusion matrix, and classification report.
+
+    Note: balanced_weights only works if clf.fit accepts sample_weight.
+    For example:
+    - ✅ RandomForestClassifier, SVC, XGBClassifier, LGBMClassifier, CatBoostClassifier
+    - ❌ KNeighborsClassifier does not support sample weights
 
     Returns
     -------
-    float : accuracy_score
+    float
+        Accuracy score on the validation set.
     """
 
     if flatten:
@@ -1372,7 +1383,13 @@ def evaluate_ML_model(
         print(clf)
         start_time = time.perf_counter()  # start timing prediction
 
-    clf.fit(X_train_flat, y_train)
+    if (
+        balanced_weights and "sample_weight" in inspect.signature(clf.fit).parameters
+    ):  # vérifie que le param balanced_weights = True + que le classifier accepte sample_weight dans son fit
+        sample_weights = compute_sample_weight("balanced", y_train)
+        clf.fit(X_train, y_train, sample_weight=sample_weights)
+    else:
+        clf.fit(X_train, y_train)
 
     y_pred = clf.predict(X_valid_flat)
 
@@ -1389,7 +1406,8 @@ def evaluate_ML_model(
         display(pd.crosstab(y_valid, y_pred))
         print(classification_report(y_valid, y_pred))
 
-    return (accuracy, encoder) if encode else accuracy  # type: ignore
+    return float(accuracy)
+    # convertit accuracy en float pour éviter une erreur de type entre Float et float...
 
 
 
@@ -1679,46 +1697,9 @@ X_sample_train_flat = flatten_dataset(X_sample_train)
 # ## Resampling
 
 # %% [markdown]
-# ### Without resampling but Using native Weighted Loss method from models
+# ### Without resampling but Using sample_weights in fit from sklearn API
 
 # %% [markdown]
-# Machine Learning:
-# use class_weight parameter to instantiate classifier (or during fit for xgboost) and evaluate with mlogloss as metric
-#
-# * sklearn models and LightGBM :
-# instantiate classifier with parameter class_weight = 'balanced' (or give custom class_weights dictionary to control ponderation...)
-# ex: clf = RandomForestClassifier(class_weight='balanced')
-# Note : not all sklearn models support the class_weight parameter (e.g., KNeighborsClassifier and NaiveBayes do not support it).
-# For non-linear models (such as SVMs and decision trees/forests), the effect of class_weight may be less noticeable than in linear models, since these models can already handle some degree of imbalance through their structure.
-#
-# * XGBoost:
-# compute sample_weights as below then fit classifier with parameter sample_weight=sample_weights
-#
-# from sklearn.utils.class_weight import compute_class_weight
-# import numpy as np
-# #encode y_train first
-# classes = np.unique(y_train)
-# #weights per class
-# class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
-# #dict
-# class_weight_dict = dict(zip(classes, class_weights))
-# #weights per sample
-# sample_weights = np.array([class_weight_dict[y] for y in y_train])
-# #fit model with sample_weights
-# model = XGBClassifier()
-# model.fit(X_train, y_train, sample_weight=sample_weights)
-#
-# Note: for binary classification, use model = XGBClassifier(scale_pos_weight=weight_ratio)
-#
-# * CatBoost :
-# compute weights as below then instantiate classifier with parameter class_weights=class_weights.tolist()
-#
-# from sklearn.utils.class_weight import compute_class_weight
-# import numpy as np
-# classes = np.unique(y_train)
-# class_weights = compute_class_weight(class_weight='balanced', classes=classes, y=y_train)
-# model = CatBoostClassifier(class_weights=class_weights.tolist())
-#
 # Deep Learning:
 # from sklearn.preprocessing import LabelEncoder
 # from sklearn.utils.class_weight import compute_class_weight
@@ -1854,22 +1835,16 @@ names_bin_test = names_res_test
 
 # %% editable=true slideshow={"slide_type": ""}
 # Random Forest
-RF = ensemble.RandomForestClassifier(
-    n_jobs=n_jobs, random_state=random_state, class_weight="balanced_subsample"
-)
-# Note: class_weight='balanced_subsample' est utile si tu as un fort déséquilibre
-#  et que tu veux que chaque arbre "voit" un équilibre adapté à son propre échantillon.
-# Pour la plupart des cas, 'balanced' suffit et est plus stable.
+RF = ensemble.RandomForestClassifier(n_jobs=n_jobs, random_state=random_state)
+
 
 # Support Vector Machine
-SVM = SVC(class_weight="balanced", random_state=random_state)
+SVM = SVC(random_state=random_state)
 # le paramètre n_jobs n'existe pas dans SVC car il utilise un seul cœur CPU
 
 # k-Nearest Neighbors
 KNN = KNeighborsClassifier(n_jobs=n_jobs)
 # le paramètre random_state n'existe pas dans KNN car c’est un algorithme non probabiliste et déterministe
-# KNN ne propose pas de paramètre class_weight
-
 
 # XGBoost
 XGB = XGBClassifier(
@@ -1975,9 +1950,7 @@ X_sample_train_flat = X_sample_train_flat.astype("float32") / 255.0
 # %%
 # start_time = time.perf_counter()
 
-rf = ensemble.RandomForestClassifier(
-    n_jobs=1, random_state=random_state, class_weight="balanced_subsample"
-)
+rf = ensemble.RandomForestClassifier(n_jobs=1, random_state=random_state)
 # n_jobs = 1 car le parallélisme se fera sur le CV
 
 param_dist = {
@@ -2041,9 +2014,7 @@ if TUNE_RF:
 # %%
 # start_time = time.perf_counter()
 
-rf = ensemble.RandomForestClassifier(
-    n_jobs=1, random_state=random_state, class_weight="balanced_subsample"
-)
+rf = ensemble.RandomForestClassifier(n_jobs=1, random_state=random_state)
 # n_jobs = 1 car le parallélisme se fera sur le CV
 
 """

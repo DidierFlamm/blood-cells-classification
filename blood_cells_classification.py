@@ -73,6 +73,8 @@ from skimage.filters import (
 )
 pd.set_option("future.no_silent_downcasting", True)  # silence a pandas future warning
 
+# %%
+
 # %% [markdown] id="UayeOUH0oA6-"
 # ## Définition des paramètres
 

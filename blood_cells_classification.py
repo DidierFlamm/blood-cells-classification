@@ -2457,7 +2457,10 @@ if CALIB:
         n_jobs=n_jobs,
     )
 
-    calibrated_rf.fit(X_res_train_valid_flat, y_res_train_valid_encoded)
+    sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
+    calibrated_rf.fit(
+        X_res_train_valid_flat, y_res_train_valid_encoded, sample_weight=sample_weights
+    )
 
     # sauvegarder
     path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib")
@@ -2469,24 +2472,43 @@ if CALIB:
 # ### XGBoost
 
 # %%
-if CALIB:
+if not CALIB:
 
     # charger
-
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
     best_xgb = joblib.load(path)
+
+    best_xgb.set_params(device="cpu")
 
     model = clone(best_xgb)
     print(model)
 
     y_res_train_encoded = encoder.transform(y_res_train)
-    model.fit(X_res_train_flat, y_res_train_encoded)
+
+    sample_weights = compute_sample_weight("balanced", y_res_train_encoded)
+    model.fit(X_res_train_flat, y_res_train_encoded, sample_weights=sample_weights)
+
+    # sauvegarder
+    path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_fitted_train_v1.joblib")
+    joblib.dump(model, path)
+
+
+
+# %% [markdown]
+# avec StratifiedKFold
+
+# %%
+if CALIB:
+
+    # charger
+    path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_fitted_train_v1.joblib")
+    model = joblib.load(path)
 
     frozen_model = FrozenEstimator(model)
 
     calibrated_xgb = CalibratedClassifierCV(
         estimator=frozen_model,  # type: ignore
-        method="sigmoid",  # ou 'sigmoid'
+        method="sigmoid",
         cv=None,
         n_jobs=n_jobs,
     )
@@ -2498,10 +2520,6 @@ if CALIB:
     path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
     joblib.dump(calibrated_xgb, path)
 
-
-
-# %% [markdown]
-# avec StratifiedKFold
 
 # %%
 """
@@ -2556,7 +2574,6 @@ if FINAL_EVAL:
     model = calibrated_rf  # calibré et entraîné
     print(model)
 
-    start_time = time.perf_counter()
     y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
     y_res_test_encoded = encoder.transform(y_res_test)
     accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
@@ -2564,9 +2581,6 @@ if FINAL_EVAL:
 
     y_res_prob_encoded = model.predict_proba(X_res_test_flat)
     loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
-
-    end_time = time.perf_counter()
-    predict_time = end_time - start_time
 
     y_res_pred = encoder.inverse_transform(
         y_res_pred_encoded
@@ -2578,7 +2592,6 @@ if FINAL_EVAL:
     df_report = pd.DataFrame(dict_report).T
 
     if verbose:
-        print(f"duration: {predict_time:.3f} s")
         print("loss:", loss)
         print("accuracy:", accuracy)
         print("balanced accuracy:", balanced_accuracy)
@@ -2611,7 +2624,6 @@ if FINAL_EVAL:
     model = calibrated_xgb  # calibré et entraîné
     print(model)
 
-    start_time = time.perf_counter()
     y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
     y_res_test_encoded = encoder.transform(y_res_test)
     accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
@@ -2619,9 +2631,6 @@ if FINAL_EVAL:
 
     y_res_prob_encoded = model.predict_proba(X_res_test_flat)
     loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
-
-    end_time = time.perf_counter()
-    predict_time = end_time - start_time
 
     y_res_pred = encoder.inverse_transform(
         y_res_pred_encoded
@@ -2633,7 +2642,6 @@ if FINAL_EVAL:
     df_report = pd.DataFrame(dict_report).T
 
     if verbose:
-        print(f"duration: {predict_time:.3f} s")
         print("loss:", loss)
         print("accuracy:", accuracy)
         print("balanced accuracy:", balanced_accuracy)

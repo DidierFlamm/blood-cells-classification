@@ -27,6 +27,7 @@
 # %%
 from typing import Tuple, List, Dict, Optional, Union, TypeVar
 import time
+from datetime import datetime
 import os
 from IPython.display import display, HTML
 import random
@@ -107,7 +108,7 @@ SAVE_SUB = False  # default = False
 LOAD_RES = True  # default = False
 
 SAMPLE_SIZE = 2500  # default = 2500 : sub-dataset used for debugging
-PERF_ML = True  # default = True
+PERF_ML = False  # default = True
 TUNE_RF = True  # default = True
 TUNE_XGB = True  # default = True
 TUNE_LGBM = True  # default = True
@@ -124,7 +125,8 @@ target_size = (img_height, img_width)
 VALID_SPLIT = 0.15
 TEST_SPLIT = 0.15
 
-USE_SAMPLE = True  # default = False
+TUNE_DS = "SAM"  # 'RES', 'BIN' or 'SAM' #default = RES
+# BIN A PROGRAMMER !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 # Chemin d'accès aux images originales (brutes)
 PATH_RAW = "/home/did/Windows/Downloads/raw"
@@ -1977,7 +1979,7 @@ cv = StratifiedKFold(
     n_splits=5, shuffle=True, random_state=random_state
 )  # ici on peut utiliser cv=5 car on limite le nombre de candidats avec n_iter
 
-scoring = ["accuracy", "neg_log_loss"]
+scoring = ["accuracy", "balanced_accuracy", "neg_log_loss"]
 
 randomized_CV_RF = RandomizedSearchCV(
     estimator=rf,
@@ -1992,9 +1994,9 @@ randomized_CV_RF = RandomizedSearchCV(
 )
 
 if TUNE_RF:
-    if not USE_SAMPLE:
+    if TUNE_DS == "RES":
         randomized_CV_RF.fit(X_res_train_flat, y_res_train)
-    else:
+    elif TUNE_DS == "SAM":
         randomized_CV_RF.fit(X_sample_train_flat, y_sample_train)
 
     # stop_time = time.perf_counter()
@@ -2015,7 +2017,16 @@ if TUNE_RF:
     results_df.to_csv(path, index=False)
 
     if verbose:
-        display(results_df.iloc[:5, np.r_[0, 4:10, 16, 17, 18, 27:30]])
+        display(
+            results_df[
+                [
+                    "params",
+                    "mean_test_accuracy",
+                    "mean_test_balanced_accuracy",
+                    "mean_test_logloss",
+                ]
+            ].head(10)
+        )
 
 
 # %% [markdown]
@@ -2077,7 +2088,7 @@ param_grid = {
 
 cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
 
-scoring = ["accuracy", "neg_log_loss"]
+scoring = ["accuracy", "balanced_accuracy" "neg_log_loss"]
 
 grid_CV_RF = GridSearchCV(
     estimator=rf,
@@ -2090,9 +2101,9 @@ grid_CV_RF = GridSearchCV(
 )
 
 if TUNE_RF:
-    if not USE_SAMPLE:
+    if TUNE_DS == "RES":
         grid_CV_RF.fit(X_res_train_flat, y_res_train)
-    else:
+    elif TUNE_DS == "SAM":
         grid_CV_RF.fit(X_sample_train_flat, y_sample_train)
 
     # if verbose:
@@ -2112,7 +2123,16 @@ if TUNE_RF:
     results_df.to_csv(path, index=False)
 
     if verbose:
-        display(results_df.iloc[:5, np.r_[0, 4:10, 16, 17, 18, 27:30]])
+        display(
+            results_df[
+                [
+                    "params",
+                    "mean_test_accuracy",
+                    "mean_test_balanced_accuracy",
+                    "mean_test_logloss",
+                ]
+            ].head(10)
+        )
 
     # sauvegarder
     path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
@@ -2199,12 +2219,13 @@ if TUNE_XGB:
 start_time = time.perf_counter()
 
 
-if not USE_SAMPLE:
+if TUNE_DS == "RES":
     X_flat = X_res_train_valid_flat
     y_enc = encoder.transform(y_res_train_valid)
-else:
+elif TUNE_DS == "SAM":
     X_flat = X_sample_train_valid_flat
     y_enc = encoder.transform(y_sample_train_valid)
+
 
 param_grid = {
     "max_depth": [3, 6],  # 1 Profondeur max des arbres: 3 à 6 = limite overfitting
@@ -2478,6 +2499,7 @@ start_time = time.perf_counter()
 y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
 y_res_test_encoded = encoder.transform(y_res_test)
 accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
+balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
 
 y_res_prob_encoded = model.predict_proba(X_res_test_flat)
 loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
@@ -2487,21 +2509,29 @@ predict_time = end_time - start_time
 
 y_res_pred = encoder.inverse_transform(y_res_pred_encoded)  # Décodage des prédictions
 cm = pd.crosstab(y_res_test, y_res_pred)
-cr_dict = classification_report(y_res_test, y_res_pred, output_dict=True)
+dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
+# Ajout de balanced accuracy au classification report
+dict_report["balanced_accuracy"] = balanced_accuracy
+df_report = pd.DataFrame(cr_dict).T
+)
 
 if verbose:
     print(f"duration: {predict_time:.3f} s")
     print("loss:", loss)
     print("accuracy:", accuracy)
+    print("balanced accuracy:", balanced_accuracy)
     display(cm)
-    print(classification_report(y_res_test, y_res_pred))
+    display(df_report.round(3))
 
 # Sauvegarder csv
-path = os.path.join(PATH_JOBLIB, "rf_confusion_matrix.csv")
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+
+path = os.path.join(PATH_JOBLIB, f"rf_confusion_matrix_{timestamp}.csv")
 cm.to_csv(path)
 
-df_report = pd.DataFrame(cr_dict).transpose()
-path = os.path.join(PATH_JOBLIB, "rf_classification_report.csv")
+
+path = os.path.join(PATH_JOBLIB, f"rf_classification_report_{timestamp}.csv")
 df_report.to_csv(path)
 
 
@@ -2522,6 +2552,7 @@ start_time = time.perf_counter()
 y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
 y_res_test_encoded = encoder.transform(y_res_test)
 accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
+balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
 
 y_res_prob_encoded = model.predict_proba(X_res_test_flat)
 loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
@@ -2531,21 +2562,28 @@ predict_time = end_time - start_time
 
 y_res_pred = encoder.inverse_transform(y_res_pred_encoded)  # Décodage des prédictions
 cm = pd.crosstab(y_res_test, y_res_pred)
-cr_dict = classification_report(y_res_test, y_res_pred, output_dict=True)
+dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
+# Ajout de balanced accuracy au classification report
+dict_report["balanced_accuracy"] = balanced_accuracy
+df_report = pd.DataFrame(cr_dict).T
 
 if verbose:
     print(f"duration: {predict_time:.3f} s")
     print("loss:", loss)
     print("accuracy:", accuracy)
+    print("balanced accuracy:", balanced_accuracy)
     display(cm)
-    print(classification_report(y_res_test, y_res_pred))
+    display(df_report.round(3))
 
 # Sauvegarder csv
-path = os.path.join(PATH_JOBLIB, "xgb_confusion_matrix.csv")
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+
+path = os.path.join(PATH_JOBLIB, f"xgb_confusion_matrix_{timestamp}.csv")
 cm.to_csv(path)
 
-df_report = pd.DataFrame(cr_dict).transpose()
-path = os.path.join(PATH_JOBLIB, "xgb_classification_report.csv")
+
+path = os.path.join(PATH_JOBLIB, f"xgb_classification_report_{timestamp}.csv")
 df_report.to_csv(path)
 
 

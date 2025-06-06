@@ -126,7 +126,6 @@ VALID_SPLIT = 0.15
 TEST_SPLIT = 0.15
 
 TUNE_DS = "SAM"  # 'RES', 'BIN' or 'SAM' #default = RES
-# BIN A PROGRAMMER !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 # Chemin d'accès aux images originales (brutes)
 PATH_RAW = "/home/did/Windows/Downloads/raw"
@@ -1821,7 +1820,12 @@ ib = ImagesBinarizer(best_threshold)
 X_bin_train = ib.fit_transform(X_res_train)
 X_bin_valid = ib.transform(X_res_valid)
 X_bin_test = ib.transform(X_res_test)
+X_bin_train_valid = ib.transform(X_res_train_valid)
 
+X_bin_train_valid_flat = flatten_dataset(X_bin_train_valid)
+X_bin_train_flat = flatten_dataset(X_bin_train)
+
+y_bin_train_valid = y_res_train_valid
 y_bin_train = y_res_train
 y_bin_valid = y_res_valid
 y_bin_test = y_res_test
@@ -1952,6 +1956,9 @@ X_res_test_flat = X_res_test_flat.astype("float32") / 255.0
 X_sample_train_valid_flat = X_sample_train_valid_flat.astype("float32") / 255.0
 X_sample_train_flat = X_sample_train_flat.astype("float32") / 255.0
 
+X_bin_train_valid_flat = X_bin_train_valid_flat.astype("float32") / 255.0
+X_bin_train_flat = X_bin_train_flat.astype("float32") / 255.0
+
 
 # %% [markdown]
 # ### Random Forest
@@ -1998,6 +2005,8 @@ if TUNE_RF:
         randomized_CV_RF.fit(X_res_train_flat, y_res_train)
     elif TUNE_DS == "SAM":
         randomized_CV_RF.fit(X_sample_train_flat, y_sample_train)
+    elif TUNE_DS == "BIN":
+        randomized_CV_RF.fit(X_bin_train_flat, y_bin_train)
 
     # stop_time = time.perf_counter()
 
@@ -2105,6 +2114,8 @@ if TUNE_RF:
         grid_CV_RF.fit(X_res_train_flat, y_res_train)
     elif TUNE_DS == "SAM":
         grid_CV_RF.fit(X_sample_train_flat, y_sample_train)
+    elif TUNE_DS == "BIN":
+        grid_CV_RF.fit(X_bin_train_flat, y_bin_train)
 
     # if verbose:
     # stop_time = time.perf_counter()
@@ -2225,6 +2236,9 @@ if TUNE_DS == "RES":
 elif TUNE_DS == "SAM":
     X_flat = X_sample_train_valid_flat
     y_enc = encoder.transform(y_sample_train_valid)
+elif TUNE_DS == "BIN":
+    X_flat = X_bin_train_valid_flat
+    y_enc = encoder.transform(y_bin_train_valid)
 
 
 param_grid = {
@@ -2512,8 +2526,7 @@ cm = pd.crosstab(y_res_test, y_res_pred)
 dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
 # Ajout de balanced accuracy au classification report
 dict_report["balanced_accuracy"] = balanced_accuracy
-df_report = pd.DataFrame(cr_dict).T
-)
+df_report = pd.DataFrame(dict_report).T
 
 if verbose:
     print(f"duration: {predict_time:.3f} s")
@@ -2565,7 +2578,7 @@ cm = pd.crosstab(y_res_test, y_res_pred)
 dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
 # Ajout de balanced accuracy au classification report
 dict_report["balanced_accuracy"] = balanced_accuracy
-df_report = pd.DataFrame(cr_dict).T
+df_report = pd.DataFrame(dict_report).T
 
 if verbose:
     print(f"duration: {predict_time:.3f} s")

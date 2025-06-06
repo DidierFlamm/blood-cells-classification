@@ -35,8 +35,8 @@ from collections import defaultdict, Counter
 import inspect
 from pathlib import Path
 import matplotlib.pyplot as plt
-import squarify
 # %matplotlib inline
+import squarify
 import itertools
 import joblib
 import cv2
@@ -55,8 +55,14 @@ from sklearn.model_selection import (
     train_test_split,
     StratifiedKFold,
     GridSearchCV,
-    RandomizedSearchCV)
-from sklearn.metrics import accuracy_score, balanced_accuracy_score, classification_report, log_loss
+    RandomizedSearchCV,
+)
+from sklearn.metrics import (
+    accuracy_score,
+    balanced_accuracy_score,
+    classification_report,
+    log_loss,
+)
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.calibration import CalibratedClassifierCV
@@ -71,7 +77,9 @@ from skimage.filters import (
     threshold_sauvola,
     threshold_yen,
 )
+
 pd.set_option("future.no_silent_downcasting", True)  # silence a pandas future warning
+
 
 
 # %% [markdown] id="UayeOUH0oA6-"
@@ -109,10 +117,15 @@ LOAD_RES = True  # default = False
 
 SAMPLE_SIZE = 2500  # default = 2500 : sub-dataset used for debugging
 PERF_ML = False  # default = True
-TUNE_RF = True  # default = True
-TUNE_XGB = True  # default = True
+TUNE_RF = False  # default = True
+TUNE_XGB = False  # default = True
 TUNE_LGBM = True  # default = True
 TUNE_CAT = False  # default = True
+
+CALIB = False  # default = True
+FINAL_EVAL = True  # default = True
+FINAL_TRAIN = False  # default = True
+
 
 # Taille des images après pre-process
 img_height = 100  # les images d'origine étant presque carrées,
@@ -681,8 +694,6 @@ def load_images(
             + f"{'Total':<12} ➜ {len(y):>6} images, {nunique:>2} shape(s): {sorted(set().union(*shapes.values()))}"
         )
 
-    if verbose:
-        print("\n🔢 Returning lists\n")
     return X, y, names
 
 
@@ -968,7 +979,7 @@ class ImagesBinarizer:
                 Batch of images (RGB, grayscale, or flattened).
         """
 
-        if self.otsu_ is None:
+        if self.otsu_ is None or self.yen_ is None:
             raise RuntimeError(
                 "You must fit the transformer before calling plot_threshold_analysis"
             )
@@ -1028,7 +1039,7 @@ class ImagesBinarizer:
         # If a custom threshold, show it too in red
         if isinstance(self.threshold_param, float):
             plt.axvline(
-                self.threshold_,
+                self.threshold_param,
                 color="purple",
                 linestyle="--",
                 label=f"Custom = {self.threshold_}",
@@ -1536,6 +1547,7 @@ def augment_image(img, zoom_min=0.7, zoom_max=0.95, random_state=None):
 data_viz(path=PATH_RAW)
 
 
+
 # %% [markdown] id="CR2UKFfH3-Rm"
 # # Pre-Processing
 
@@ -1549,6 +1561,7 @@ if LOAD_RAW:
         verbose=True,
         plot_duplicates=True,
     )
+
 
 
 # %% [markdown]
@@ -1582,6 +1595,7 @@ if LOAD_RAW:
         )
 
 
+
 # %%
 if LOAD_RES:
     X_res, y_res, names_res = load_images(
@@ -1591,6 +1605,7 @@ if LOAD_RES:
         verbose=True,
         plot_duplicates=True,
     )
+
 
 
 # %% [markdown] id="owa57R5s57Nq"
@@ -1631,6 +1646,7 @@ X_res_train, X_res_valid, y_res_train, y_res_valid, names_res_train, names_res_v
 )
 
 
+
 # %%
 # check class distribution after split
 assert y_res is not None, "LOAD_RAW and/or LOAD_RES must be True"
@@ -1639,6 +1655,7 @@ print_class_distribution(y_res_train_valid, "Train + Valid")
 print_class_distribution(y_res_train, "Train")
 print_class_distribution(y_res_valid, "Valid")
 print_class_distribution(y_res_test, "Test")
+
 
 
 # %% [markdown]
@@ -1652,6 +1669,7 @@ X_res_train_valid_flat = flatten_dataset(X_res_train_valid)
 X_res_train_flat = flatten_dataset(X_res_train)
 X_res_valid_flat = flatten_dataset(X_res_valid)
 X_res_test_flat = flatten_dataset(X_res_test)
+
 
 
 # %% [markdown]
@@ -1777,19 +1795,19 @@ X_sample_train_flat = flatten_dataset(X_sample_train)
 #     batch_size=...)
 
 # %% [markdown]
-# Exemple de cible uniforme (vers 2000–2500 par classe)  
-# Tu pourrais viser un dataset équilibré autour de 2000-2500 images par classe, avec par exemple :  
-#   
-# Ne rien faire pour : platelet, erythroblast, monocyte  
-#   
-# Oversampler : lymphoblast, basophil, lymphocyte  
-# => using Resized dataset and Data Augmentation  
-# lymphoblast	~1000 (au lieu de 130)  
-# basophil	~1500	Oversampling (léger)  
-# lymphocyte	~1500	Oversampling (léger)  
-# monocyte	~1500	Oversampling (léger)  
-#   
-# Undersampler (éventuellement)  neutrophil, eosinophil, ig  
+# Exemple de cible uniforme (vers 2000–2500 par classe)
+# Tu pourrais viser un dataset équilibré autour de 2000-2500 images par classe, avec par exemple :
+#
+# Ne rien faire pour : platelet, erythroblast, monocyte
+#
+# Oversampler : lymphoblast, basophil, lymphocyte
+# => using Resized dataset and Data Augmentation
+# lymphoblast	~1000 (au lieu de 130)
+# basophil	~1500	Oversampling (léger)
+# lymphocyte	~1500	Oversampling (léger)
+# monocyte	~1500	Oversampling (léger)
+#
+# Undersampler (éventuellement)  neutrophil, eosinophil, ig
 
 # %% [markdown] id="n995KGOs6S6R"
 # ## Binarization
@@ -1803,6 +1821,7 @@ ib = ImagesBinarizer()
 ib.fit(X_res_train)
 ib.plot_threshold_analysis(X_res_train)
 ib.show_sample(X_res_train, y_res_train, names_res_train)
+
 
 
 # %% [markdown]
@@ -1833,6 +1852,7 @@ y_bin_test = y_res_test
 names_bin_train = names_res_train
 names_bin_valid = names_res_valid
 names_bin_test = names_res_test
+
 
 
 # %% [markdown] id="boj16iBu7XqO"
@@ -1893,11 +1913,13 @@ LGBM = LGBMClassifier(
 )
 
 
+
 # %% [markdown]
 # ### Select models
 
 # %%
 models = [RF, KNN, XGB]  # default : models = [RF, SVM, KNN, XGB, LGBM, CAT]
+
 
 
 # %% [markdown]
@@ -1909,11 +1931,13 @@ SAM = (X_sample_train, X_sample_valid, y_sample_train, y_sample_valid, "Sample")
 BIN = (X_bin_train, X_bin_valid, y_bin_train, y_bin_valid, "Binarized")
 
 
+
 # %% [markdown]
 # ### Select datasets
 
 # %%
 datasets = [BIN]  # default = [RES, SAM, BIN]
+
 
 
 # %% [markdown]
@@ -1924,6 +1948,7 @@ if PERF_ML:
     ML_global_perf = evaluate_ML_global(
         models, datasets, balanced_weights=True, verbose=True
     )
+
 
 
 # %% [markdown] editable=true slideshow={"slide_type": ""}
@@ -1943,6 +1968,7 @@ path = os.path.join(PATH_JOBLIB, "labelencoder_trainvalid_v1.joblib")
 joblib.dump(encoder, path)
 
 
+
 # %%
 # conversion des 'numpy.uint8' en float32 normalisé pour faciliter le traitement par classifier
 
@@ -1956,8 +1982,10 @@ X_res_test_flat = X_res_test_flat.astype("float32") / 255.0
 X_sample_train_valid_flat = X_sample_train_valid_flat.astype("float32") / 255.0
 X_sample_train_flat = X_sample_train_flat.astype("float32") / 255.0
 
-X_bin_train_valid_flat = X_bin_train_valid_flat.astype("float32") / 255.0
-X_bin_train_flat = X_bin_train_flat.astype("float32") / 255.0
+# X_bin ont des valeurs binaires uint8 sont converties en float32 mais pas /255.0
+X_bin_train_valid_flat = X_bin_train_valid_flat.astype("float32")
+X_bin_train_flat = X_bin_train_flat.astype("float32")
+
 
 
 # %% [markdown]
@@ -1991,7 +2019,7 @@ scoring = ["accuracy", "balanced_accuracy", "neg_log_loss"]
 randomized_CV_RF = RandomizedSearchCV(
     estimator=rf,
     param_distributions=param_dist,
-    n_iter=500,  # commencer par 1 puis adapter selon ton temps disponible
+    n_iter=5,  # 500,  # commencer par 1 puis adapter selon ton temps disponible
     cv=cv,
     n_jobs=n_jobs,
     random_state=random_state,
@@ -1999,6 +2027,8 @@ randomized_CV_RF = RandomizedSearchCV(
     scoring=scoring,
     refit="neg_log_loss",  # on priorise logloss a accuracy pendant le tuning
 )
+
+best_params = {}  # to remove type warning...
 
 if TUNE_RF:
     if TUNE_DS == "RES":
@@ -2022,7 +2052,9 @@ if TUNE_RF:
     results_df["std_test_logloss"] = results_df["std_test_neg_log_loss"]
     results_df["rank_test_logloss"] = results_df["rank_test_neg_log_loss"]
     results_df.sort_values(by="mean_test_logloss", inplace=True)
-    path = os.path.join(PATH_JOBLIB, "rf_random_cv_results.csv")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    path = os.path.join(PATH_JOBLIB, f"rf_random_cv_results_{timestamp}.csv")
     results_df.to_csv(path, index=False)
 
     if verbose:
@@ -2038,78 +2070,77 @@ if TUNE_RF:
         )
 
 
+
 # %% [markdown]
 # #### using GridSearchCV (exhaustive)
 # with StratifiedKFold
 
 # %%
 # start_time = time.perf_counter()
-
-rf = ensemble.RandomForestClassifier(n_jobs=1, random_state=random_state)
-# n_jobs = 1 car le parallélisme se fera sur le CV
-
-"""
-param_grid = {
-    "n_estimators": [100, 200, 300],  # nombre d’arbres
-    "max_depth": [None, 20, 40],  # profondeur max (None = jusqu'à pureté)
-    "min_samples_split": [2, 5, 10],  # min samples pour un split
-    "min_samples_leaf": [1, 2, 4],  # min samples dans une feuille
-    "max_features": ["sqrt", "log2"],  # nombre de features à tester à chaque split
-}
-"""
-param_grid = {
-    "n_estimators": [
-        max(100, best_params["n_estimators"] - 50),
-        best_params["n_estimators"],
-        best_params["n_estimators"] + 50,
-    ],
-    "max_features": (
-        ["sqrt", "log2"]
-        if best_params["max_features"] in ["sqrt", "log2"]
-        else [best_params["max_features"]]
-    ),
-    "max_depth": (
-        [
-            max(1, best_params["max_depth"] - 5),
-            best_params["max_depth"],
-            best_params["max_depth"] + 5,
-        ]
-        if best_params["max_depth"] is not None
-        else [50, 100, None]
-    ),
-    "min_samples_split": sorted(
-        {
-            max(2, best_params["min_samples_split"] - 1),
-            best_params["min_samples_split"],
-            best_params["min_samples_split"] + 1,
-        }
-    ),
-    "min_samples_leaf": sorted(
-        {
-            max(1, best_params["min_samples_leaf"] - 1),
-            best_params["min_samples_leaf"],
-            best_params["min_samples_leaf"] + 1,
-        }
-    ),
-    "bootstrap": [best_params["bootstrap"]],
-}
-
-
-cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
-
-scoring = ["accuracy", "balanced_accuracy" "neg_log_loss"]
-
-grid_CV_RF = GridSearchCV(
-    estimator=rf,
-    param_grid=param_grid,
-    scoring=scoring,
-    refit="neg_log_loss",
-    cv=cv,
-    n_jobs=n_jobs,
-    verbose=int(verbose),
-)
-
 if TUNE_RF:
+    rf = ensemble.RandomForestClassifier(n_jobs=1, random_state=random_state)
+    # n_jobs = 1 car le parallélisme se fera sur le CV
+
+    """
+    param_grid = {
+        "n_estimators": [100, 200, 300],  # nombre d’arbres
+        "max_depth": [None, 20, 40],  # profondeur max (None = jusqu'à pureté)
+        "min_samples_split": [2, 5, 10],  # min samples pour un split
+        "min_samples_leaf": [1, 2, 4],  # min samples dans une feuille
+        "max_features": ["sqrt", "log2"],  # nombre de features à tester à chaque split
+    }
+    """
+    param_grid = {
+        "n_estimators": [
+            max(100, best_params["n_estimators"] - 50),
+            best_params["n_estimators"],
+            best_params["n_estimators"] + 50,
+        ],
+        "max_features": (
+            ["sqrt", "log2"]
+            if best_params["max_features"] in ["sqrt", "log2"]
+            else [best_params["max_features"]]
+        ),
+        "max_depth": (
+            [
+                max(1, best_params["max_depth"] - 5),
+                best_params["max_depth"],
+                best_params["max_depth"] + 5,
+            ]
+            if best_params["max_depth"] is not None
+            else [50, 100, None]
+        ),
+        "min_samples_split": sorted(
+            {
+                max(2, best_params["min_samples_split"] - 1),
+                best_params["min_samples_split"],
+                best_params["min_samples_split"] + 1,
+            }
+        ),
+        "min_samples_leaf": sorted(
+            {
+                max(1, best_params["min_samples_leaf"] - 1),
+                best_params["min_samples_leaf"],
+                best_params["min_samples_leaf"] + 1,
+            }
+        ),
+        "bootstrap": [best_params["bootstrap"]],
+    }
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+
+    scoring = ["accuracy", "balanced_accuracy", "neg_log_loss"]
+
+    grid_CV_RF = GridSearchCV(
+        estimator=rf,
+        param_grid=param_grid,
+        scoring=scoring,
+        refit="neg_log_loss",
+        cv=cv,
+        n_jobs=n_jobs,
+        verbose=int(verbose),
+    )
+
     if TUNE_DS == "RES":
         grid_CV_RF.fit(X_res_train_flat, y_res_train)
     elif TUNE_DS == "SAM":
@@ -2130,7 +2161,9 @@ if TUNE_RF:
     results_df["std_test_logloss"] = results_df["std_test_neg_log_loss"]
     results_df["rank_test_logloss"] = results_df["rank_test_neg_log_loss"]
     results_df.sort_values(by="mean_test_logloss", inplace=True)
-    path = os.path.join(PATH_JOBLIB, "rf_grid_cv_results.csv")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    path = os.path.join(PATH_JOBLIB, f"rf_grid_cv_results_{timestamp}.csv")
     results_df.to_csv(path, index=False)
 
     if verbose:
@@ -2148,6 +2181,7 @@ if TUNE_RF:
     # sauvegarder
     path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
     joblib.dump(best_rf_grid_cv, path)
+
 
 
 # %% [markdown]
@@ -2223,170 +2257,177 @@ if TUNE_XGB:
 """
 
 
+
 # %% [markdown]
 # using xgb.cv()
 
 # %%
 start_time = time.perf_counter()
 
+if TUNE_XGB:
 
-if TUNE_DS == "RES":
-    X_flat = X_res_train_valid_flat
-    y_enc = encoder.transform(y_res_train_valid)
-elif TUNE_DS == "SAM":
-    X_flat = X_sample_train_valid_flat
-    y_enc = encoder.transform(y_sample_train_valid)
-elif TUNE_DS == "BIN":
-    X_flat = X_bin_train_valid_flat
-    y_enc = encoder.transform(y_bin_train_valid)
+    if TUNE_DS == "RES":
+        X_flat = X_res_train_valid_flat
+        y_enc = encoder.transform(y_res_train_valid)
+    elif TUNE_DS == "SAM":
+        X_flat = X_sample_train_valid_flat
+        y_enc = encoder.transform(y_sample_train_valid)
+    elif TUNE_DS == "BIN":
+        X_flat = X_bin_train_valid_flat
+        y_enc = encoder.transform(y_bin_train_valid)
 
-
-param_grid = {
-    "max_depth": [3, 6],  # 1 Profondeur max des arbres: 3 à 6 = limite overfitting
-    "learning_rate": [
-        0.1,
-        0.01,
-    ],  # 2 Taille des pas de gradient: 0.1 (rapide), 0.01 (plus précis)
-    "subsample": [
-        0.8
-    ],  # [0.8, 1.0],          #4 Pourcentage d’échantillons: 0.8 pour du bagging
-    "colsample_bytree": [
-        0.6
-    ],  # [0.6, 0.8],          #5 Proportion de features utilisées par arbre	0.6–0.8 (cruciale avec beaucoup de features)
-    "gamma": [
-        0,
-        1,
-    ],  # 6 Gain minimal pour scinder un nœud: 0 ou 1 (régularisation légère)
-}
-
-dtrain = xgb.DMatrix(X_flat, label=y_enc)
-
-num_boost_round = 5  # 50 ou 100
-nfold = 3  # ou 5
-
-best_score = float("inf")  # on cherche à minimiser score = mlogloss
-best_idx = None
-best_logloss_std = None
-best_acc_mean = None
-best_acc_std = None
-best_params = None
-best_num_boost_round = None
-all_results = []
-
-
-n_candidates = 1
-for v in param_grid.values():
-    n_candidates *= len(v)
-
-for idx, (max_depth, learning_rate, subsample, colsample_bytree, gamma) in enumerate(
-    tqdm(
-        itertools.product(*param_grid.values()), total=n_candidates, desc="Grid search"
-    )
-):
-
-    params = {
-        "objective": "multi:softprob",
-        "num_class": len(set(y_enc)),  # type: ignore
-        "eval_metric": [
-            "merror",
-            "mlogloss",
-        ],  # early stopping sur merror (la dernière)
-        "n_jobs": n_jobs,
-        "verbosity": int(
-            verbose
-        ),  # The degree of verbosity. Valid values are 0 (silent) - 3 (debug).
-        "seed": random_state,
-        "tree_method": "hist",  # réduit considérablement la RAM utilisée au détriment d’un temps de training un peu plus long
-        "device": "cuda",  # not enough memory for cuda
-        "max_depth": max_depth,
-        "learning_rate": learning_rate,
-        "subsample": subsample,
-        "colsample_bytree": colsample_bytree,
-        "gamma": gamma,
+    param_grid = {
+        "max_depth": [3, 6],  # 1 Profondeur max des arbres: 3 à 6 = limite overfitting
+        "learning_rate": [
+            0.1,
+            0.01,
+        ],  # 2 Taille des pas de gradient: 0.1 (rapide), 0.01 (plus précis)
+        "subsample": [
+            0.8
+        ],  # [0.8, 1.0],          #4 Pourcentage d’échantillons: 0.8 pour du bagging
+        "colsample_bytree": [
+            0.6
+        ],  # [0.6, 0.8],          #5 Proportion de features utilisées par arbre	0.6–0.8 (cruciale avec beaucoup de features)
+        "gamma": [
+            0,
+            1,
+        ],  # 6 Gain minimal pour scinder un nœud: 0 ou 1 (régularisation légère)
     }
 
-    cv_results = xgb.cv(
-        params,
-        dtrain,
-        num_boost_round=num_boost_round,  # ou 100
-        nfold=nfold,
-        stratified=True,
-        shuffle=True,
-        early_stopping_rounds=5,  # ou 10
-        metrics=["merror", "mlogloss"],  # pour les deux colonnes dans le CV
-        seed=random_state,
-        verbose_eval=5 * int(verbose),
-    )  # log every 5 rounds
+    dtrain = xgb.DMatrix(X_flat, label=y_enc)
 
-    best_round_idx = cv_results["test-mlogloss-mean"].idxmin()  # type: ignore # indice du meilleur round (min logloss)
-    best_round_logloss_mean = cv_results.loc[best_round_idx, "test-mlogloss-mean"]  # type: ignore # logloss moyenne au meilleur round
-    best_round_logloss_std = cv_results.loc[best_round_idx, "test-mlogloss-std"]  # type: ignore
-    best_round_acc_mean = 1 - cv_results.loc[best_round_idx, "test-merror-mean"]  # type: ignore # accuracy moyenne au meilleur round
-    best_round_acc_std = cv_results.loc[best_round_idx, "test-merror-std"]  # type: ignore # std de l’erreur au meilleur round = std de l'accuracy
-    best_round_num_boost_round = best_round_idx + 1  # type: ignore
-    # +1 car idxmin() retourne l'index (0-based)
+    num_boost_round = 5  # 50 ou 100
+    nfold = 3  # ou 5
 
-    all_results.append(
-        {
-            "idx": idx,
-            "params": params,
-            "logloss_mean": best_round_logloss_mean,
-            "logloss_std": best_round_logloss_std,
-            "acc_mean": best_round_acc_mean,
-            "acc_std": best_round_acc_std,
-            "num_boost_round": best_round_num_boost_round,
+    best_score = float("inf")  # on cherche à minimiser score = mlogloss
+    best_idx = None
+    best_logloss_std = None
+    best_acc_mean = None
+    best_acc_std = None
+    best_params = None
+    best_num_boost_round = None
+    all_results = []
+
+    n_candidates = 1
+    for v in param_grid.values():
+        n_candidates *= len(v)
+
+    for idx, (
+        max_depth,
+        learning_rate,
+        subsample,
+        colsample_bytree,
+        gamma,
+    ) in enumerate(
+        tqdm(
+            itertools.product(*param_grid.values()),
+            total=n_candidates,
+            desc="Grid search",
+        )
+    ):
+
+        params = {
+            "objective": "multi:softprob",
+            "num_class": len(set(y_enc)),  # type: ignore
+            "eval_metric": [
+                "merror",
+                "mlogloss",
+            ],  # early stopping sur merror (la dernière)
+            "n_jobs": n_jobs,
+            "verbosity": int(
+                verbose
+            ),  # The degree of verbosity. Valid values are 0 (silent) - 3 (debug).
+            "seed": random_state,
+            "tree_method": "hist",  # réduit considérablement la RAM utilisée au détriment d’un temps de training un peu plus long
+            "device": "cuda",  # not enough memory for cuda
+            "max_depth": max_depth,
+            "learning_rate": learning_rate,
+            "subsample": subsample,
+            "colsample_bytree": colsample_bytree,
+            "gamma": gamma,
         }
-    )
 
-    if best_round_logloss_mean < best_score:  # type: ignore
-        best_idx = idx
-        best_score = best_round_logloss_mean  # logloss de la meilleure combinaison de paramètres rencontrée jusqu'ici
-        best_logloss_std = best_round_logloss_std
-        best_acc_mean = best_round_acc_mean
-        best_acc_std = best_round_acc_std
-        best_params = params
-        best_num_boost_round = best_round_num_boost_round
+        cv_results = xgb.cv(
+            params,
+            dtrain,
+            num_boost_round=num_boost_round,  # ou 100
+            nfold=nfold,
+            stratified=True,
+            shuffle=True,
+            early_stopping_rounds=5,  # ou 10
+            metrics=["merror", "mlogloss"],  # pour les deux colonnes dans le CV
+            seed=random_state,
+            verbose_eval=5 * int(verbose),
+        )  # log every 5 rounds
 
-if verbose:
-    stop_time = time.perf_counter()
-    duration = stop_time - start_time
-    print(f"📊 XGBClassifier fitted using CV in {int(duration)}s")
-    print(f"{nfold} folds for each of {n_candidates} candidates, totalling {nfold*n_candidates} fits")  # type: ignore
-    print(f"Mean duration per fit: {duration/(nfold*n_candidates):.1f}s")
-    print(f"Best candidate is #{best_idx} (best mlogloss on test = {best_score})")
-    print(f"\t• mean test logloss : {best_score:.4f}")
-    print(f"\t• std  test logloss : {best_logloss_std:.4f}")
-    print(f"\t• mean test accuracy: {best_acc_mean:.4f}")
-    print(f"\t• std  test accuracy: {best_acc_std:.4f}")
-    print("\t• params:", best_params)
-    print("\t• number of trees:", best_num_boost_round)
+        best_round_idx = cv_results["test-mlogloss-mean"].idxmin()  # type: ignore # indice du meilleur round (min logloss)
+        best_round_logloss_mean = cv_results.loc[best_round_idx, "test-mlogloss-mean"]  # type: ignore # logloss moyenne au meilleur round
+        best_round_logloss_std = cv_results.loc[best_round_idx, "test-mlogloss-std"]  # type: ignore
+        best_round_acc_mean = 1 - cv_results.loc[best_round_idx, "test-merror-mean"]  # type: ignore # accuracy moyenne au meilleur round
+        best_round_acc_std = cv_results.loc[best_round_idx, "test-merror-std"]  # type: ignore # std de l’erreur au meilleur round = std de l'accuracy
+        best_round_num_boost_round = best_round_idx + 1  # type: ignore
+        # +1 car idxmin() retourne l'index (0-based)
 
-assert best_params is not None, "Grid search failed to find any parameters"
-best_xgb = XGBClassifier(**best_params, n_estimators=best_num_boost_round)  # type: ignore
+        all_results.append(
+            {
+                "idx": idx,
+                "params": params,
+                "logloss_mean": best_round_logloss_mean,
+                "logloss_std": best_round_logloss_std,
+                "acc_mean": best_round_acc_mean,
+                "acc_std": best_round_acc_std,
+                "num_boost_round": best_round_num_boost_round,
+            }
+        )
 
-all_results = sorted(
-    all_results, key=lambda x: x["logloss_mean"]
-)  # tri par logloss croissante
-print("\nTop 5 configurations:")
-for r in all_results[:5]:
-    print(
-        f"• logloss={r['logloss_mean']:.4f}, acc={r['acc_mean']:.4f}, rounds={r['num_boost_round']}, depth={r['params']['max_depth']}, lr={r['params']['learning_rate']}"
-    )
+        if best_round_logloss_mean < best_score:  # type: ignore
+            best_idx = idx
+            best_score = best_round_logloss_mean  # logloss de la meilleure combinaison de paramètres rencontrée jusqu'ici
+            best_logloss_std = best_round_logloss_std
+            best_acc_mean = best_round_acc_mean
+            best_acc_std = best_round_acc_std
+            best_params = params
+            best_num_boost_round = best_round_num_boost_round
 
+    if verbose:
+        stop_time = time.perf_counter()
+        duration = stop_time - start_time
+        print(f"📊 XGBClassifier fitted using CV in {int(duration)}s")
+        print(f"{nfold} folds for each of {n_candidates} candidates, totalling {nfold*n_candidates} fits")  # type: ignore
+        print(f"Mean duration per fit: {duration/(nfold*n_candidates):.1f}s")
+        print(f"Best candidate is #{best_idx} (best mlogloss on test = {best_score})")
+        print(f"\t• mean test logloss : {best_score:.4f}")
+        print(f"\t• std  test logloss : {best_logloss_std:.4f}")
+        print(f"\t• mean test accuracy: {best_acc_mean:.4f}")
+        print(f"\t• std  test accuracy: {best_acc_std:.4f}")
+        print("\t• params:", best_params)
+        print("\t• number of trees:", best_num_boost_round)
 
-results_df = pd.DataFrame(all_results)
-display(results_df.head())
+    assert best_params is not None, "Grid search failed to find any parameters"
+    best_xgb = XGBClassifier(**best_params, n_estimators=best_num_boost_round)  # type: ignore
 
+    all_results = sorted(
+        all_results, key=lambda x: x["logloss_mean"]
+    )  # tri par logloss croissante
+    print("\nTop 5 configurations:")
+    for r in all_results[:5]:
+        print(
+            f"• logloss={r['logloss_mean']:.4f}, acc={r['acc_mean']:.4f}, rounds={r['num_boost_round']}, depth={r['params']['max_depth']}, lr={r['params']['learning_rate']}"
+        )
 
-path = os.path.join(PATH_JOBLIB, "xgb_grid_results.csv")
-results_df.to_csv(path, index=False)
+    results_df = pd.DataFrame(all_results)
+    display(results_df.head())
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    path = os.path.join(PATH_JOBLIB, f"xgb_grid_cv_results_{timestamp}.csv")
+    results_df.to_csv(path, index=False)
 
-# Sauvegarder le modèle non fitted
-best_xgb.set_params(n_jobs=1)
-best_xgb.set_params(device="cuda")
-path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
-joblib.dump(best_xgb, path)
+    # Sauvegarder le modèle non fitted
+    best_xgb.set_params(n_jobs=1)
+    best_xgb.set_params(device="cuda")
+    path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
+    joblib.dump(best_xgb, path)
+
 
 
 # %% [markdown]
@@ -2397,62 +2438,66 @@ joblib.dump(best_xgb, path)
 # ### Random Forest
 
 # %%
-# charger
+if CALIB:
 
-path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
-best_rf_grid_cv = joblib.load(path)
+    # charger
 
+    path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
+    best_rf_grid_cv = joblib.load(path)
 
-cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
 
-model = clone(best_rf_grid_cv)  # clone pour avoir le modèle non entraîné
-print(model)
+    model = clone(best_rf_grid_cv)  # clone pour avoir le modèle non entraîné
+    print(model)
 
-calibrated_rf = CalibratedClassifierCV(
-    estimator=model,
-    method="sigmoid",
-    cv=cv,  # on pourrait utiliser cv=5 directement qui est stratifié mais sans shuffle...
-    n_jobs=n_jobs,
-)
+    calibrated_rf = CalibratedClassifierCV(
+        estimator=model,
+        method="sigmoid",
+        cv=cv,  # on pourrait utiliser cv=5 directement qui est stratifié mais sans shuffle...
+        n_jobs=n_jobs,
+    )
 
-calibrated_rf.fit(X_res_train_valid_flat, y_res_train_valid_encoded)
+    calibrated_rf.fit(X_res_train_valid_flat, y_res_train_valid_encoded)
 
-# sauvegarder
-path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib")
-joblib.dump(calibrated_rf, path)
+    # sauvegarder
+    path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib")
+    joblib.dump(calibrated_rf, path)
+
 
 
 # %% [markdown]
 # ### XGBoost
 
 # %%
-# charger
+if CALIB:
 
-path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
-best_xgb = joblib.load(path)
+    # charger
 
+    path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
+    best_xgb = joblib.load(path)
 
-model = clone(best_xgb)
-print(model)
+    model = clone(best_xgb)
+    print(model)
 
-y_res_train_encoded = encoder.transform(y_res_train)
-model.fit(X_res_train_flat, y_res_train_encoded)
+    y_res_train_encoded = encoder.transform(y_res_train)
+    model.fit(X_res_train_flat, y_res_train_encoded)
 
-frozen_model = FrozenEstimator(model)
+    frozen_model = FrozenEstimator(model)
 
-calibrated_xgb = CalibratedClassifierCV(
-    estimator=frozen_model,  # type: ignore
-    method="sigmoid",  # ou 'sigmoid'
-    cv=None,
-    n_jobs=n_jobs,
-)
+    calibrated_xgb = CalibratedClassifierCV(
+        estimator=frozen_model,  # type: ignore
+        method="sigmoid",  # ou 'sigmoid'
+        cv=None,
+        n_jobs=n_jobs,
+    )
 
-y_res_valid_encoded = encoder.transform(y_res_valid)
-calibrated_xgb.fit(X_res_valid_flat, y_res_valid_encoded)
+    y_res_valid_encoded = encoder.transform(y_res_valid)
+    calibrated_xgb.fit(X_res_valid_flat, y_res_valid_encoded)
 
-# sauvegarder
-path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
-joblib.dump(calibrated_xgb, path)
+    # sauvegarder
+    path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
+    joblib.dump(calibrated_xgb, path)
+
 
 
 # %% [markdown]
@@ -2490,6 +2535,7 @@ joblib.dump(calibrated_xgb_cv, path)
 """
 
 
+
 # %% [markdown]
 # ## Final evaluation
 #  on Test set
@@ -2498,106 +2544,112 @@ joblib.dump(calibrated_xgb_cv, path)
 # ### Random Forest
 
 # %%
-# Charger
+if FINAL_EVAL:
 
-path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib")
-calibrated_rf = joblib.load(path)
-path = os.path.join(PATH_JOBLIB, "labelencoder_trainvalid_v1.joblib")
-encoder = joblib.load(path)
+    # Charger
 
+    path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib")
+    calibrated_rf = joblib.load(path)
+    path = os.path.join(PATH_JOBLIB, "labelencoder_trainvalid_v1.joblib")
+    encoder = joblib.load(path)
 
-model = calibrated_rf  # calibré et entraîné
-print(model)
+    model = calibrated_rf  # calibré et entraîné
+    print(model)
 
-start_time = time.perf_counter()
-y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
-y_res_test_encoded = encoder.transform(y_res_test)
-accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
-balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
+    start_time = time.perf_counter()
+    y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
+    y_res_test_encoded = encoder.transform(y_res_test)
+    accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
+    balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
 
-y_res_prob_encoded = model.predict_proba(X_res_test_flat)
-loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
+    y_res_prob_encoded = model.predict_proba(X_res_test_flat)
+    loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
 
-end_time = time.perf_counter()
-predict_time = end_time - start_time
+    end_time = time.perf_counter()
+    predict_time = end_time - start_time
 
-y_res_pred = encoder.inverse_transform(y_res_pred_encoded)  # Décodage des prédictions
-cm = pd.crosstab(y_res_test, y_res_pred)
-dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
-# Ajout de balanced accuracy au classification report
-dict_report["balanced_accuracy"] = balanced_accuracy
-df_report = pd.DataFrame(dict_report).T
+    y_res_pred = encoder.inverse_transform(
+        y_res_pred_encoded
+    )  # Décodage des prédictions
+    cm = pd.crosstab(y_res_test, y_res_pred)
+    dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
+    # Ajout de balanced accuracy au classification report
+    dict_report["balanced_accuracy"] = balanced_accuracy  # type: ignore
+    df_report = pd.DataFrame(dict_report).T
 
-if verbose:
-    print(f"duration: {predict_time:.3f} s")
-    print("loss:", loss)
-    print("accuracy:", accuracy)
-    print("balanced accuracy:", balanced_accuracy)
-    display(cm)
-    display(df_report.round(3))
+    if verbose:
+        print(f"duration: {predict_time:.3f} s")
+        print("loss:", loss)
+        print("accuracy:", accuracy)
+        print("balanced accuracy:", balanced_accuracy)
+        display(cm)
+        display(df_report.round(3))
 
-# Sauvegarder csv
+    # Sauvegarder csv
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 
-path = os.path.join(PATH_JOBLIB, f"rf_confusion_matrix_{timestamp}.csv")
-cm.to_csv(path)
+    path = os.path.join(PATH_JOBLIB, f"rf_confusion_matrix_{timestamp}.csv")
+    cm.to_csv(path)
 
+    path = os.path.join(PATH_JOBLIB, f"rf_classification_report_{timestamp}.csv")
+    df_report.to_csv(path)
 
-path = os.path.join(PATH_JOBLIB, f"rf_classification_report_{timestamp}.csv")
-df_report.to_csv(path)
 
 
 # %% [markdown]
 # ### XGBoost
 
 # %%
-# Charger
+if FINAL_EVAL:
 
-path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
-calibrated_xgb = joblib.load(path)
+    # Charger
 
+    path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
+    calibrated_xgb = joblib.load(path)
 
-model = calibrated_xgb  # calibré et entraîné
-print(model)
+    model = calibrated_xgb  # calibré et entraîné
+    print(model)
 
-start_time = time.perf_counter()
-y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
-y_res_test_encoded = encoder.transform(y_res_test)
-accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
-balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
+    start_time = time.perf_counter()
+    y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
+    y_res_test_encoded = encoder.transform(y_res_test)
+    accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
+    balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
 
-y_res_prob_encoded = model.predict_proba(X_res_test_flat)
-loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
+    y_res_prob_encoded = model.predict_proba(X_res_test_flat)
+    loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
 
-end_time = time.perf_counter()
-predict_time = end_time - start_time
+    end_time = time.perf_counter()
+    predict_time = end_time - start_time
 
-y_res_pred = encoder.inverse_transform(y_res_pred_encoded)  # Décodage des prédictions
-cm = pd.crosstab(y_res_test, y_res_pred)
-dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
-# Ajout de balanced accuracy au classification report
-dict_report["balanced_accuracy"] = balanced_accuracy
-df_report = pd.DataFrame(dict_report).T
+    y_res_pred = encoder.inverse_transform(
+        y_res_pred_encoded
+    )  # Décodage des prédictions
+    cm = pd.crosstab(y_res_test, y_res_pred)
+    dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
+    # Ajout de balanced accuracy au classification report
+    dict_report["balanced_accuracy"] = balanced_accuracy  # type: ignore
+    df_report = pd.DataFrame(dict_report).T
 
-if verbose:
-    print(f"duration: {predict_time:.3f} s")
-    print("loss:", loss)
-    print("accuracy:", accuracy)
-    print("balanced accuracy:", balanced_accuracy)
-    display(cm)
-    display(df_report.round(3))
+    if verbose:
+        print(f"duration: {predict_time:.3f} s")
+        print("loss:", loss)
+        print("accuracy:", accuracy)
+        print("balanced accuracy:", balanced_accuracy)
+        display(cm)
+        display(df_report.round(3))
 
-# Sauvegarder csv
+    # Sauvegarder csv
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 
-path = os.path.join(PATH_JOBLIB, f"xgb_confusion_matrix_{timestamp}.csv")
-cm.to_csv(path)
+    path = os.path.join(PATH_JOBLIB, f"xgb_confusion_matrix_{timestamp}.csv")
+    cm.to_csv(path)
 
+    path = os.path.join(PATH_JOBLIB, f"xgb_classification_report_{timestamp}.csv")
+    df_report.to_csv(path)
 
-path = os.path.join(PATH_JOBLIB, f"xgb_classification_report_{timestamp}.csv")
-df_report.to_csv(path)
 
 
 # %% [markdown]
@@ -2607,41 +2659,44 @@ df_report.to_csv(path)
 # ### Random Forest
 
 # %%
-# charger
-path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
-best_rf_grid_cv = joblib.load(path)
+if FINAL_TRAIN:
 
-model = clone(best_rf_grid_cv)
-print(model)
+    # charger
+    path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
+    best_rf_grid_cv = joblib.load(path)
 
-model.fit(X_res_flat, y_res_encoded)
+    model = clone(best_rf_grid_cv)
+    print(model)
 
-# sauvegarder le modèle non calibré
-path = os.path.join(PATH_JOBLIB, "rf_final_fitted_all_v1.joblib")
-joblib.dump(model, path)
+    model.fit(X_res_flat, y_res_encoded)
 
+    # sauvegarder le modèle non calibré
+    path = os.path.join(PATH_JOBLIB, "rf_final_fitted_all_v1.joblib")
+    joblib.dump(model, path)
 
-frozen_model = FrozenEstimator(model)
+    frozen_model = FrozenEstimator(model)
 
-# calibration
-calibrated_rf = CalibratedClassifierCV(
-    estimator=frozen_model,  # type: ignore
-    method="sigmoid",  # ou 'sigmoid'
-    cv=None,
-    n_jobs=n_jobs,
-)
-calibrated_rf.fit(X_res_flat, y_res_encoded)
+    # calibration
+    calibrated_rf = CalibratedClassifierCV(
+        estimator=frozen_model,  # type: ignore
+        method="sigmoid",  # ou 'sigmoid'
+        cv=None,
+        n_jobs=n_jobs,
+    )
+    calibrated_rf.fit(X_res_flat, y_res_encoded)
 
-# sauvegarder le modèle calibré
-path = os.path.join(PATH_JOBLIB, "rf_final_calibrated_sigmoid_all_v1.joblib")
-joblib.dump(calibrated_rf, path)
+    # sauvegarder le modèle calibré
+    path = os.path.join(PATH_JOBLIB, "rf_final_calibrated_sigmoid_all_v1.joblib")
+    joblib.dump(calibrated_rf, path)
 
-# différence de taille des 2 versions
-uncalibrated_path = os.path.join(PATH_JOBLIB, "rf_final_fitted_all_v1.joblib")
-calibrated_path = os.path.join(PATH_JOBLIB, "rf_final_calibrated_sigmoid_all_v1.joblib")
+    # différence de taille des 2 versions
+    uncalibrated_path = os.path.join(PATH_JOBLIB, "rf_final_fitted_all_v1.joblib")
+    calibrated_path = os.path.join(
+        PATH_JOBLIB, "rf_final_calibrated_sigmoid_all_v1.joblib"
+    )
 
-print(f"Uncalibrated: {os.path.getsize(uncalibrated_path)/1e6:.2f} MB")
-print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
+    print(f"Uncalibrated: {os.path.getsize(uncalibrated_path)/1e6:.2f} MB")
+    print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
 
 
 
@@ -2649,44 +2704,45 @@ print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
 # ### XGBoost
 
 # %%
-# charger
-path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
-best_xgb = joblib.load(path)
+if FINAL_TRAIN:
 
-model = clone(best_xgb)
-print(model)
+    # charger
+    path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
+    best_xgb = joblib.load(path)
 
-model.fit(X_res_flat, y_res_encoded)
+    model = clone(best_xgb)
+    print(model)
 
-# sauvegarder le modèle entraîné mais non calibré
-path = os.path.join(PATH_JOBLIB, "xgb_final_fitted_all_v1.joblib")
-joblib.dump(model, path)
+    model.fit(X_res_flat, y_res_encoded)
 
+    # sauvegarder le modèle entraîné mais non calibré
+    path = os.path.join(PATH_JOBLIB, "xgb_final_fitted_all_v1.joblib")
+    joblib.dump(model, path)
 
-# %%
-frozen_model = FrozenEstimator(model)
+    frozen_model = FrozenEstimator(model)
 
-# calibration
-calibrated_xgb = CalibratedClassifierCV(
-    estimator=frozen_model,  # type: ignore
-    method="sigmoid",  # ou 'sigmoid'
-    cv=None,
-    n_jobs=n_jobs,
-)
-calibrated_xgb.fit(X_res_flat, y_res_encoded)
+    # calibration
+    calibrated_xgb = CalibratedClassifierCV(
+        estimator=frozen_model,  # type: ignore
+        method="sigmoid",  # ou 'sigmoid'
+        cv=None,
+        n_jobs=n_jobs,
+    )
+    calibrated_xgb.fit(X_res_flat, y_res_encoded)
 
-# sauvegarder le modèle calibré
-path = os.path.join(PATH_JOBLIB, "xgb_final_calibrated_sigmoid_all_v1.joblib")
-joblib.dump(calibrated_rf, path)
+    # sauvegarder le modèle calibré
+    path = os.path.join(PATH_JOBLIB, "xgb_final_calibrated_sigmoid_all_v1.joblib")
+    joblib.dump(calibrated_rf, path)
 
-# différence de taille des 2 versions
-uncalibrated_path = os.path.join(PATH_JOBLIB, "xgb_final_fitted_all_v1.joblib")
-calibrated_path = os.path.join(
-    PATH_JOBLIB, "xgb_final_calibrated_sigmoid_all_v1.joblib"
-)
+    # différence de taille des 2 versions
+    uncalibrated_path = os.path.join(PATH_JOBLIB, "xgb_final_fitted_all_v1.joblib")
+    calibrated_path = os.path.join(
+        PATH_JOBLIB, "xgb_final_calibrated_sigmoid_all_v1.joblib"
+    )
 
-print(f"Uncalibrated: {os.path.getsize(uncalibrated_path)/1e6:.2f} MB")
-print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
+    print(f"Uncalibrated: {os.path.getsize(uncalibrated_path)/1e6:.2f} MB")
+    print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
+
 
 
 # %% [markdown] id="q_VckjXO9EK6"
@@ -2925,6 +2981,7 @@ model_4_64, _, _ = DidVGG16(
 DidSave(model_4_64, "/content/drive/MyDrive/BD/model_4_layers_64_batch")
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="-RXalbGE-ymZ" outputId="be03837b-7194-4361-d8aa-9d0928bb3e91"
 model_0_64, _, _ = DidVGG16(
     train_generator,
@@ -2937,6 +2994,7 @@ model_0_64, _, _ = DidVGG16(
     model_eval=True,
 )
 DidSave(model_0_64, "/content/drive/MyDrive/BD/model_0_layers_64_batch")
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="uX1mpAVX_K7f" outputId="74f4ccaa-b945-4b39-b652-7f68a5bc6443"
@@ -2952,6 +3010,7 @@ model_12_64, _, _ = DidVGG16(
 )
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RuTkn5dy_Kmn" outputId="bb8f472a-07f0-4a68-bbf1-738f1d4e5133"
 model_21_32, _, _ = DidVGG16(
     train_generator,
@@ -2963,6 +3022,7 @@ model_21_32, _, _ = DidVGG16(
     batch_size=32,
     model_eval=True,
 )
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="GlDfoafy_KNL" outputId="1c38dda1-aa93-4506-d233-84577f88ebff"
@@ -3006,8 +3066,10 @@ def DidLoad(fichier):
 # DidSave(model_12_64, '/content/drive/MyDrive/BD/model_12_layers_64_batch')
 
 
+
 # %% id="vE5RV3y-B5ut"
 # DidSave(model_21_64, '/content/drive/MyDrive/BD/model_16_layers_64_batch')
+
 
 
 # %% [markdown] id="K4efqyWkApK3"
@@ -3087,15 +3149,18 @@ def DidFeatureExtractionClassification(
     return X_train_features, X_test_features
 
 
+
 # %% id="GpAykBPJw4p4"
 # X,Y = DidPreprocessing(path_DS, img_width = 100, img_height = 100, drop_duplicates = True)
 # DidSave(X,'/content/drive/MyDrive/BD/variable_X')
 # DidSave(Y,'/content/drive/MyDrive/BD/variable_Y')
 
 
+
 # %% id="fCvihuOYDhPt"
 X = DidLoad("/content/drive/MyDrive/BD/variable_X")
 Y = DidLoad("/content/drive/MyDrive/BD/variable_Y")
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="dUyE_qw4CeGT" outputId="acf5bdf5-6874-4999-a76d-440420ae16b0"
@@ -3105,6 +3170,7 @@ for i in [2, 5]:
     )
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="QAz1qp_dZxFm" outputId="1f35eb80-ec88-4b4c-cd1d-f9dcdaad30ae"
 for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
@@ -3112,11 +3178,13 @@ for i in [2, 5]:
     )
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="Ir1Ja5BGCrCW" outputId="791f2753-b325-4172-ab25-fc9ca93a25c2"
 for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
         X, Y, model_21_64, layers_output=i, xgb=True
     )
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="rRs_tg9XlYZB" outputId="753d163f-5f6e-4a96-f6fb-d2460e7298e8"
@@ -3135,6 +3203,7 @@ for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
         X, Y, model_12_32, layers_output=i, xgb=True
     )
+
 
 
 # %% [markdown] id="3yqIvN7RsLQp"
@@ -3178,6 +3247,7 @@ Y_test_enc = le.transform(Y_test)
 
 clf.fit(X_train, Y_train_enc)
 print("score de classification avec XGBoost           :", clf.score(X_test, Y_test_enc))
+
 
 
 # %% [markdown] id="tTBQgKq59Vxa"
@@ -3229,6 +3299,7 @@ test_generator = test_datagen.flow_from_directory(
 )
 
 
+
 # %% id="Nx-kbOpizmAc"
 print("model2 : C2 143 - 224x224 - lr 1e-4")
 
@@ -3275,6 +3346,7 @@ history2 = model2.fit(
 )
 
 
+
 # %% id="N97N7rN0zl9D"
 train_loss = history2.history["loss"]
 val_loss = history2.history["val_loss"]
@@ -3303,8 +3375,10 @@ plt.legend(["train", "test"], loc="right")
 plt.show()
 
 
+
 # %% id="sm2J1Tq3zl55"
 model2.summary()
+
 
 
 # %% id="JAIXF_Szzl07"
@@ -3383,6 +3457,7 @@ test_from_url(
 )
 
 
+
 # %% [markdown] id="SNyQV1tT9jU9"
 # ##3. DenseNet121
 
@@ -3396,6 +3471,7 @@ from tensorflow.keras.models import Model
 import tensorflow as tf
 
 
+
 # %% id="oV54ArNrRnvr"
 # Rechargement des données sauvegardées
 
@@ -3403,8 +3479,10 @@ X_dnet121 = X_reload
 Y_dnet121 = Y_reload
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="dFOhXM7zRq3K" outputId="cf0743b5-b134-4315-a188-123ea01c7366"
 Y_dnet121
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="KBn--OTwfCK1" outputId="b261029f-d5c3-4c2c-d2e4-d4f272a00be6"
@@ -3445,12 +3523,14 @@ X_dnet121_train_base, X_dnet121_test_base, Y_dnet121_train_base, Y_dnet121_test_
 )
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="akh5XRYXSDZO" outputId="ec515ca8-0e9b-4fa0-8f95-6f5954a36f2b"
 # Preprocessing train data pour le densenet121
 
 X_dnet121_train, Y_dnet121_train = preprocess_data(
     X_dnet121_train_base, Y_dnet121_train_base
 )
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="kZY_liLhSFmM" outputId="c31e84e2-fc6b-45d2-dd8b-9acd8447ff7b"
@@ -3461,12 +3541,14 @@ X_dnet121_test, Y_dnet121_test = preprocess_data(
 )
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="I3hVf4nZSKqF" outputId="947dbfe9-a0e8-4127-fe1c-53edd5aa632a"
 # Implémentation du DenseNet121 et gel des 150 premières couches
 
 base_densenet121 = tf.keras.applications.DenseNet121(
     include_top=False, weights="imagenet"
 )
+
 
 
 # %% id="wihQmjToSMBV"
@@ -3478,10 +3560,12 @@ for layer in base_densenet121.layers[149:]:
     layer.trainable = True
 
 
+
 # %% id="e6YN2A9MSVb9"
 # Construction du modèle
 
 model_densenet121 = tf.keras.models.Sequential()
+
 
 
 # %% id="S4tCCN5jSWaG"
@@ -3494,6 +3578,7 @@ model_densenet121.add(
         )
     )
 )
+
 
 
 # %% id="it66z3CISYIt"
@@ -3523,6 +3608,7 @@ model_densenet121.add(
 )
 
 
+
 # %% id="0PzfQ_aOSdPe"
 # Callbacks
 
@@ -3550,6 +3636,7 @@ CB.append(
 )
 
 
+
 # %% id="Qv6ys4ghSen9"
 # Compile
 
@@ -3558,6 +3645,7 @@ optimizer = "Adam"
 model_densenet121.compile(
     optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"]
 )
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="9phKwPbvSf4l" outputId="89acb4c7-f58e-4e9e-9f94-e7d651daba75"
@@ -3574,6 +3662,7 @@ history_densenet121 = model_densenet121.fit(
 )
 
 
+
 # %% id="h0Cbk8INSifF"
 # Enregistrement du modèle
 
@@ -3584,6 +3673,7 @@ pickle.dump(model_densenet121, pickle_out)
 pickle_out.close()
 
 
+
 # %% id="bVmysuWgSklo"
 # Enregistrement de l'historique
 
@@ -3592,8 +3682,10 @@ pickle.dump(history_densenet121, pickle_out)
 pickle_out.close()
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="3hskaViHSqNP" outputId="ac89457d-ad09-4017-a4af-67f164315dc0"
 model_densenet121.summary()
+
 
 
 # %% id="DtbjrHWfSrd1"
@@ -3602,6 +3694,7 @@ model_densenet121.summary()
 train_acc = history_densenet121.history["accuracy"]
 
 val_acc = history_densenet121.history["val_accuracy"]
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="UP5vaZzpSvLr" outputId="b19e35fc-dc7b-42c6-8799-d60ab5e74f70"
@@ -3613,10 +3706,12 @@ plt.grid(True)
 plt.show()
 
 
+
 # %% id="v2lmTT4sSySR"
 train_loss = history_densenet121.history["loss"]
 
 val_loss = history_densenet121.history["val_loss"]
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="pMbojWMQSzem" outputId="27f68196-6479-4863-995c-bc1c19590c40"
@@ -3628,18 +3723,22 @@ plt.grid(True)
 plt.show()
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="DQUKB0gqS0yz" outputId="2bfa68c3-7950-4273-d52a-f33e34375285"
 # Prédictions du modèle
 
 probs_pred_densenet121 = model_densenet121.predict(X_dnet121_test)
 
 
+
 # %% id="Drs-yP_IS3RO"
 Y_pred_densenet121 = np.argmax(probs_pred_densenet121, axis=1)
 
 
+
 # %% id="ubfeaywBS4Vu"
 Y_test_densenet121_sparse = np.argmax(Y_dnet121_test, axis=1)
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="EvyEqp3nS5Ts" outputId="842f2e1f-f3eb-4b93-bb75-8bdade758ed1"
@@ -3652,6 +3751,7 @@ conf_matrix_densenet121 = confusion_matrix(
 print(conf_matrix_densenet121)
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="iZYdwSOfS-td" outputId="b359e77a-557a-4fb2-9343-e075f49843f7"
 from sklearn.metrics import classification_report
 
@@ -3662,6 +3762,7 @@ class_report_densenet121 = classification_report(
 print(class_report_densenet121)
 
 
+
 # %% id="sayDnb0BTAyk"
 # Implémentation du DenseNet121 sans geler aucun calque
 
@@ -3670,8 +3771,10 @@ base_densenet121_nf = tf.keras.applications.DenseNet121(
 )
 
 
+
 # %% id="DQKa0OxSTCLM"
 model_densenet121_nf = tf.keras.models.Sequential()
+
 
 
 # %% id="hycFvrtDTDNM"
@@ -3682,6 +3785,7 @@ model_densenet121_nf.add(
         )
     )
 )
+
 
 
 # %% id="9id8c6RKTEkU"
@@ -3711,6 +3815,7 @@ model_densenet121_nf.add(
 )
 
 
+
 # %% id="lNjfv5pBTGmN"
 # Compile
 
@@ -3719,6 +3824,7 @@ optimizer = "Adam"
 model_densenet121_nf.compile(
     optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"]
 )
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="jomeYAzATIHk" outputId="0f61b76f-a069-4f15-edae-fe924c94ff18"
@@ -3735,6 +3841,7 @@ history_densenet121_nf = model_densenet121_nf.fit(
 )
 
 
+
 # %% id="022sFPnUTLJW"
 # Enregistrement du modèle et de l'historique
 
@@ -3745,6 +3852,7 @@ pickle.dump(model_densenet121_nf, pickle_out)
 pickle_out.close()
 
 
+
 # %% [markdown] id="jsiO64OSodCV"
 #
 
@@ -3753,14 +3861,17 @@ pickle_in = open("/content/drive/MyDrive/BD/model_densenet121_nf.pckl", "rb")
 model_densenet121_nf = pickle.load(pickle_in)
 
 
+
 # %% id="H1-7B_M3TOU9"
 pickle_out = open("/content/drive/MyDrive/BD/history_densenet121_nf.pckl", "wb")
 pickle.dump(history_densenet121_nf, pickle_out)
 pickle_out.close()
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="kRvKvJzJTPc1" outputId="27f3f72d-4f43-4f0d-89bc-8f5043a8f11f"
 model_densenet121_nf.summary()
+
 
 
 # %% id="nx6ZJRc6TQrk"
@@ -3769,6 +3880,7 @@ model_densenet121_nf.summary()
 train_acc_nf = history_densenet121_nf.history["accuracy"]
 
 val_acc_nf = history_densenet121_nf.history["val_accuracy"]
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="AKtBXL-cTROc" outputId="5980158a-6bda-44cd-d59a-9366e09a5dda"
@@ -3780,10 +3892,12 @@ plt.grid(True)
 plt.show()
 
 
+
 # %% id="kZd5Hc2WTSft"
 train_loss_nf = history_densenet121_nf.history["loss"]
 
 val_loss_nf = history_densenet121_nf.history["val_loss"]
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="XXRMGJW_TTrd" outputId="d0cf036e-68d0-4dac-c9e7-a486ecebddca"
@@ -3795,18 +3909,22 @@ plt.grid(True)
 plt.show()
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="0AtuSTMUTVL9" outputId="2c8cd655-e02a-4f6b-a549-db0e5097f577"
 # Prédictions du modèle
 
 probs_pred_densenet121_nf = model_densenet121_nf.predict(X_dnet121_test)
 
 
+
 # %% id="2iP-PLlxTWrN"
 Y_pred_densenet121_nf = np.argmax(probs_pred_densenet121_nf, axis=1)
 
 
+
 # %% id="Qy3TZd8UTYIs"
 Y_test_densenet121_sparse = np.argmax(Y_dnet121_test, axis=1)
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="h8_XoEICWC8P" outputId="5a7cf807-c7bf-4630-a7f1-d76d59f44e19"
@@ -3821,6 +3939,7 @@ conf_matrix_densenet121_nf = confusion_matrix(
 print(conf_matrix_densenet121_nf)
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="KdCOw6pXWEU0" outputId="fa7163f0-249a-40d6-9085-30e6b0b7c503"
 from sklearn.metrics import classification_report
 
@@ -3831,12 +3950,14 @@ class_report_densenet121_nf = classification_report(
 print(class_report_densenet121_nf)
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/"} id="IeBRK6m1WF14" outputId="2f2cd707-8011-4449-a925-7574c6b19478"
 from imblearn.metrics import classification_report_imbalanced
 
 print(
     classification_report_imbalanced(Y_test_densenet121_sparse, Y_pred_densenet121_nf)
 )
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 449} id="FcHGb-WqWHIb" outputId="91145d70-4c38-48fe-bfff-2a22365a900f"
@@ -3857,6 +3978,7 @@ for i in range(8):
         + saved_labels[Y_pred_densenet121_nf[k]]
     )
 plt.show()
+
 
 
 # %% [markdown] id="nH8jekp8-E3B" jp-MarkdownHeadingCollapsed=true

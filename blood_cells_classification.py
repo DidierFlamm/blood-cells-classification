@@ -35,6 +35,7 @@ from collections import defaultdict, Counter
 import inspect
 from pathlib import Path
 import matplotlib.pyplot as plt
+
 # %matplotlib inline
 import seaborn as sns
 import squarify
@@ -67,7 +68,6 @@ from sklearn.metrics import (
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.calibration import CalibratedClassifierCV
-from sklearn.frozen import FrozenEstimator
 import xgboost as xgb
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
@@ -80,7 +80,6 @@ from skimage.filters import (
 )
 
 pd.set_option("future.no_silent_downcasting", True)  # silence a pandas future warning
-
 
 
 # %% [markdown] id="UayeOUH0oA6-"
@@ -161,7 +160,6 @@ PATH_BIN = "/home/did/Windows/Downloads/binarized"
 PATH_JOBLIB = "/home/did/Windows/Downloads/joblib"
 # S'assurer que PATH_JOBLIB sinon bug quand pd.to_csv
 os.makedirs(PATH_JOBLIB, exist_ok=True)
-
 
 
 # %% [markdown]
@@ -363,7 +361,6 @@ def print_colored_table(counts, colors_map) -> None:
     display(HTML(html))
 
 
-
 # %%
 def generate_filenames(y: List[str]) -> List[str]:
     """
@@ -381,7 +378,6 @@ def generate_filenames(y: List[str]) -> List[str]:
         dico[label] = dico.get(label, 0) + 1
         names.append(f"{label}_{dico[label]:0{padding}}.png")  # 0-padding dynamique
     return names
-
 
 
 # %%
@@ -515,7 +511,6 @@ def save_images(
     }
 
 
-
 # %%
 T = TypeVar("T")
 
@@ -618,7 +613,6 @@ def process_duplicates(
     return X, y, names, duplicates
 
 
-
 # %%
 def load_images(
     path: Path | str,
@@ -698,7 +692,6 @@ def load_images(
     return X, y, names
 
 
-
 # %%
 def print_class_distribution(y: List[str], name: str = "Set") -> None:
     counts = Counter(y)
@@ -711,7 +704,6 @@ def print_class_distribution(y: List[str], name: str = "Set") -> None:
 
     for cls, count in sorted(counts.items()):
         print(f"{cls:<{max_len}} {count:7}  {count/total:6.2%}")
-
 
 
 # %%
@@ -730,7 +722,6 @@ def flatten_dataset(X):
     """
     X = np.asarray(X)
     return X.reshape(len(X), -1)
-
 
 
 # %%
@@ -1205,7 +1196,6 @@ class ImagesBinarizer:
         plt.show()
 
 
-
 # %%
 def evaluate_ML_global(
     models, datasets, balanced_weights: bool = False, verbose: bool = True
@@ -1434,7 +1424,6 @@ def evaluate_ML_model(
     # convertit accuracy en float pour éviter une erreur de type entre Float et float...
 
 
-
 # %%
 def print_CV_results(search_CV, duration: int | None = None):
     """
@@ -1468,7 +1457,6 @@ def print_CV_results(search_CV, duration: int | None = None):
     print("\t• Best score   :", round(best_score, 4))
     print("\t• Mean score   :", round(mean_score, 4))
     print("\t• Std score    : ", round(std_score, 4))
-
 
 
 # %%
@@ -1540,13 +1528,11 @@ def augment_image(img, zoom_min=0.7, zoom_max=0.95, random_state=None):
     return img
 
 
-
 # %% [markdown] id="TNT2w2VWsCPd"
 # # Data Visualisation
 
 # %%
 data_viz(path=PATH_RAW)
-
 
 
 # %% [markdown] id="CR2UKFfH3-Rm"
@@ -1562,7 +1548,6 @@ if LOAD_RAW:
         verbose=True,
         plot_duplicates=True,
     )
-
 
 
 # %% [markdown]
@@ -1596,7 +1581,6 @@ if LOAD_RAW:
         )
 
 
-
 # %%
 if LOAD_RES:
     X_res, y_res, names_res = load_images(
@@ -1606,7 +1590,6 @@ if LOAD_RES:
         verbose=True,
         plot_duplicates=True,
     )
-
 
 
 # %% [markdown] id="owa57R5s57Nq"
@@ -1647,7 +1630,6 @@ X_res_train, X_res_valid, y_res_train, y_res_valid, names_res_train, names_res_v
 )
 
 
-
 # %%
 # check class distribution after split
 assert y_res is not None, "LOAD_RAW and/or LOAD_RES must be True"
@@ -1656,7 +1638,6 @@ print_class_distribution(y_res_train_valid, "Train + Valid")
 print_class_distribution(y_res_train, "Train")
 print_class_distribution(y_res_valid, "Valid")
 print_class_distribution(y_res_test, "Test")
-
 
 
 # %% [markdown]
@@ -1670,7 +1651,6 @@ X_res_train_valid_flat = flatten_dataset(X_res_train_valid)
 X_res_train_flat = flatten_dataset(X_res_train)
 X_res_valid_flat = flatten_dataset(X_res_valid)
 X_res_test_flat = flatten_dataset(X_res_test)
-
 
 
 # %% [markdown]
@@ -1721,7 +1701,6 @@ X_sample, _, y_sample, _, names_sample, _ = train_test_split(
 
 X_sample_train_valid_flat = flatten_dataset(X_sample_train_valid)
 X_sample_train_flat = flatten_dataset(X_sample_train)
-
 
 
 # %% [markdown] id="VhL_G770ywGI"
@@ -1824,7 +1803,6 @@ ib.plot_threshold_analysis(X_res_train)
 ib.show_sample(X_res_train, y_res_train, names_res_train)
 
 
-
 # %% [markdown]
 # The threshold needs to be set before the first peak to split colored cell pixels from lighter background
 # The best binarization result is obtained with a global threshold set to 0.5
@@ -1853,7 +1831,6 @@ y_bin_test = y_res_test
 names_bin_train = names_res_train
 names_bin_valid = names_res_valid
 names_bin_test = names_res_test
-
 
 
 # %% [markdown] id="boj16iBu7XqO"
@@ -1914,13 +1891,11 @@ LGBM = LGBMClassifier(
 )
 
 
-
 # %% [markdown]
 # ### Select models
 
 # %%
 models = [RF, KNN, XGB]  # default : models = [RF, SVM, KNN, XGB, LGBM, CAT]
-
 
 
 # %% [markdown]
@@ -1932,13 +1907,11 @@ SAM = (X_sample_train, X_sample_valid, y_sample_train, y_sample_valid, "Sample")
 BIN = (X_bin_train, X_bin_valid, y_bin_train, y_bin_valid, "Binarized")
 
 
-
 # %% [markdown]
 # ### Select datasets
 
 # %%
 datasets = [BIN]  # default = [RES, SAM, BIN]
-
 
 
 # %% [markdown]
@@ -1949,7 +1922,6 @@ if PERF_ML:
     ML_global_perf = evaluate_ML_global(
         models, datasets, balanced_weights=True, verbose=True
     )
-
 
 
 # %% [markdown] editable=true slideshow={"slide_type": ""}
@@ -1971,7 +1943,6 @@ path = os.path.join(PATH_JOBLIB, "labelencoder_trainvalid_v1.joblib")
 joblib.dump(encoder, path)
 
 
-
 # %%
 # conversion des 'numpy.uint8' en float32 normalisé pour faciliter le traitement par classifier
 
@@ -1988,7 +1959,6 @@ X_sample_train_flat = X_sample_train_flat.astype("float32") / 255.0
 # X_bin ont des valeurs binaires uint8 sont converties en float32 mais pas /255.0
 X_bin_train_valid_flat = X_bin_train_valid_flat.astype("float32")
 X_bin_train_flat = X_bin_train_flat.astype("float32")
-
 
 
 # %% [markdown]
@@ -2071,7 +2041,6 @@ if TUNE_RF:
                 ]
             ].head(10)
         )
-
 
 
 # %% [markdown]
@@ -2186,7 +2155,6 @@ if TUNE_RF:
     joblib.dump(best_rf_grid_cv, path)
 
 
-
 # %% [markdown]
 # ### XGBoost
 
@@ -2260,7 +2228,6 @@ if TUNE_XGB:
 """
 
 
-
 # %% [markdown]
 # using xgb.cv()
 
@@ -2297,8 +2264,8 @@ if TUNE_XGB:
         ],  # 6 Gain minimal pour scinder un nœud: 0 ou 1 (régularisation légère)
     }
 
-    weights = compute_sample_weight("balanced", y_enc)
-    dtrain = xgb.DMatrix(X_flat, label=y_enc, weight=weights)
+    weights = compute_sample_weight("balanced", y_enc)  # type: ignore
+    dtrain = xgb.DMatrix(X_flat, label=y_enc, weight=weights)  # type: ignore
 
     num_boost_round = 5  # 50 ou 100
     nfold = 3  # ou 5
@@ -2433,7 +2400,6 @@ if TUNE_XGB:
     joblib.dump(best_xgb, path)
 
 
-
 # %% [markdown]
 # ## Entraînement et Calibration par CV
 # on Train+Valid sets
@@ -2491,7 +2457,6 @@ if CALIB_RF:
         PATH_JOBLIB, "rf_final_calibrated_isotonic_cv_trainvalid_v1.joblib"
     )
     joblib.dump(calibrated_rf, path)
-
 
 
 # %% [markdown]
@@ -2568,7 +2533,6 @@ if CALIB:
 """
 
 
-
 # %%
 """
 if CALIB:
@@ -2632,7 +2596,6 @@ path = os.path.join(
 )
 joblib.dump(calibrated_xgb_cv, path)
 """
-
 
 
 # %% [markdown]
@@ -2714,7 +2677,6 @@ if FINAL_EVAL:
     plt.show()
 
 
-
 # %% [markdown]
 # ### XGBoost
 
@@ -2787,7 +2749,6 @@ if FINAL_EVAL:
     plt.xlabel("Predicted label")
     plt.title("Normalized Confusion Matrix")
     plt.show()
-
 
 
 # %% [markdown] id="q_VckjXO9EK6"
@@ -2863,7 +2824,6 @@ def DidDataGen(
     return train_generator, valid_generator, n_class
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="qK-TxDjX97rr" outputId="d00fcf0f-6eb8-41fe-a381-a91fd3383df0"
 train_generator, valid_generator, n_class = DidDataGen(
     PATH_TRAIN,
@@ -2876,7 +2836,6 @@ train_generator, valid_generator, n_class = DidDataGen(
     horizontal_flip=True,
     vertical_flip=True,
 )
-
 
 
 # %% [markdown] id="n4KuJkGZ-fPR"
@@ -3011,7 +2970,6 @@ def DidVGG16(
         return model, history
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="ThfDJFTSEWlZ" outputId="0ae36e53-ab85-400c-b35a-ba5faa663bfe"
 model_4_64, _, _ = DidVGG16(
     train_generator,
@@ -3024,7 +2982,6 @@ model_4_64, _, _ = DidVGG16(
     model_eval=True,
 )
 DidSave(model_4_64, "/content/drive/MyDrive/BD/model_4_layers_64_batch")
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="-RXalbGE-ymZ" outputId="be03837b-7194-4361-d8aa-9d0928bb3e91"
@@ -3041,7 +2998,6 @@ model_0_64, _, _ = DidVGG16(
 DidSave(model_0_64, "/content/drive/MyDrive/BD/model_0_layers_64_batch")
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="uX1mpAVX_K7f" outputId="74f4ccaa-b945-4b39-b652-7f68a5bc6443"
 model_12_64, _, _ = DidVGG16(
     train_generator,
@@ -3053,7 +3009,6 @@ model_12_64, _, _ = DidVGG16(
     batch_size=64,
     model_eval=True,
 )
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RuTkn5dy_Kmn" outputId="bb8f472a-07f0-4a68-bbf1-738f1d4e5133"
@@ -3069,7 +3024,6 @@ model_21_32, _, _ = DidVGG16(
 )
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="GlDfoafy_KNL" outputId="1c38dda1-aa93-4506-d233-84577f88ebff"
 model_21_64, _, _ = DidVGG16(
     train_generator,
@@ -3081,7 +3035,6 @@ model_21_64, _, _ = DidVGG16(
     batch_size=64,
     model_eval=True,
 )
-
 
 
 # %% [markdown] id="2KWHUPVNBBsI"
@@ -3106,15 +3059,12 @@ def DidLoad(fichier):
     return variable
 
 
-
 # %% id="krYFcPi2Zpxs"
 # DidSave(model_12_64, '/content/drive/MyDrive/BD/model_12_layers_64_batch')
 
 
-
 # %% id="vE5RV3y-B5ut"
 # DidSave(model_21_64, '/content/drive/MyDrive/BD/model_16_layers_64_batch')
-
 
 
 # %% [markdown] id="K4efqyWkApK3"
@@ -3194,18 +3144,15 @@ def DidFeatureExtractionClassification(
     return X_train_features, X_test_features
 
 
-
 # %% id="GpAykBPJw4p4"
 # X,Y = DidPreprocessing(path_DS, img_width = 100, img_height = 100, drop_duplicates = True)
 # DidSave(X,'/content/drive/MyDrive/BD/variable_X')
 # DidSave(Y,'/content/drive/MyDrive/BD/variable_Y')
 
 
-
 # %% id="fCvihuOYDhPt"
 X = DidLoad("/content/drive/MyDrive/BD/variable_X")
 Y = DidLoad("/content/drive/MyDrive/BD/variable_Y")
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="dUyE_qw4CeGT" outputId="acf5bdf5-6874-4999-a76d-440420ae16b0"
@@ -3215,7 +3162,6 @@ for i in [2, 5]:
     )
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="QAz1qp_dZxFm" outputId="1f35eb80-ec88-4b4c-cd1d-f9dcdaad30ae"
 for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
@@ -3223,13 +3169,11 @@ for i in [2, 5]:
     )
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="Ir1Ja5BGCrCW" outputId="791f2753-b325-4172-ab25-fc9ca93a25c2"
 for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
         X, Y, model_21_64, layers_output=i, xgb=True
     )
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="rRs_tg9XlYZB" outputId="753d163f-5f6e-4a96-f6fb-d2460e7298e8"
@@ -3248,7 +3192,6 @@ for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
         X, Y, model_12_32, layers_output=i, xgb=True
     )
-
 
 
 # %% [markdown] id="3yqIvN7RsLQp"
@@ -3292,7 +3235,6 @@ Y_test_enc = le.transform(Y_test)
 
 clf.fit(X_train, Y_train_enc)
 print("score de classification avec XGBoost           :", clf.score(X_test, Y_test_enc))
-
 
 
 # %% [markdown] id="tTBQgKq59Vxa"
@@ -3344,7 +3286,6 @@ test_generator = test_datagen.flow_from_directory(
 )
 
 
-
 # %% id="Nx-kbOpizmAc"
 print("model2 : C2 143 - 224x224 - lr 1e-4")
 
@@ -3391,7 +3332,6 @@ history2 = model2.fit(
 )
 
 
-
 # %% id="N97N7rN0zl9D"
 train_loss = history2.history["loss"]
 val_loss = history2.history["val_loss"]
@@ -3420,10 +3360,8 @@ plt.legend(["train", "test"], loc="right")
 plt.show()
 
 
-
 # %% id="sm2J1Tq3zl55"
 model2.summary()
-
 
 
 # %% id="JAIXF_Szzl07"
@@ -3456,7 +3394,6 @@ def test_from_local(chemin, model, test_generator):
     return print(
         "Cette image a", proba * 100, "% de chance d'être un", class_names[arg]
     )
-
 
 
 # %% id="hiZJiXnZzlna"
@@ -3494,13 +3431,11 @@ def test_from_url(image_url, model, test_generator):
     )
 
 
-
 # %% id="o80oRy09z2RV"
 # quelques tests de la fonction précédente (qui fonctionne bien)
 test_from_url(
     "http://bioimage.free.fr/hem_image/hem_img/pb32l.jpg", model2, test_generator
 )
-
 
 
 # %% [markdown] id="SNyQV1tT9jU9"
@@ -3516,7 +3451,6 @@ from tensorflow.keras.models import Model
 import tensorflow as tf
 
 
-
 # %% id="oV54ArNrRnvr"
 # Rechargement des données sauvegardées
 
@@ -3524,10 +3458,8 @@ X_dnet121 = X_reload
 Y_dnet121 = Y_reload
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="dFOhXM7zRq3K" outputId="cf0743b5-b134-4315-a188-123ea01c7366"
 Y_dnet121
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="KBn--OTwfCK1" outputId="b261029f-d5c3-4c2c-d2e4-d4f272a00be6"
@@ -3559,14 +3491,12 @@ def preprocess_data(X, Y):
     return X, Y
 
 
-
 # %% id="r1vVuUwLRx8v"
 from sklearn.model_selection import train_test_split
 
 X_dnet121_train_base, X_dnet121_test_base, Y_dnet121_train_base, Y_dnet121_test_base = (
     train_test_split(X_dnet121, Y_dnet121, test_size=0.2)
 )
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="akh5XRYXSDZO" outputId="ec515ca8-0e9b-4fa0-8f95-6f5954a36f2b"
@@ -3577,7 +3507,6 @@ X_dnet121_train, Y_dnet121_train = preprocess_data(
 )
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="kZY_liLhSFmM" outputId="c31e84e2-fc6b-45d2-dd8b-9acd8447ff7b"
 # Preprocessing test data pour le densenet121
 
@@ -3586,14 +3515,12 @@ X_dnet121_test, Y_dnet121_test = preprocess_data(
 )
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="I3hVf4nZSKqF" outputId="947dbfe9-a0e8-4127-fe1c-53edd5aa632a"
 # Implémentation du DenseNet121 et gel des 150 premières couches
 
 base_densenet121 = tf.keras.applications.DenseNet121(
     include_top=False, weights="imagenet"
 )
-
 
 
 # %% id="wihQmjToSMBV"
@@ -3605,12 +3532,10 @@ for layer in base_densenet121.layers[149:]:
     layer.trainable = True
 
 
-
 # %% id="e6YN2A9MSVb9"
 # Construction du modèle
 
 model_densenet121 = tf.keras.models.Sequential()
-
 
 
 # %% id="S4tCCN5jSWaG"
@@ -3623,7 +3548,6 @@ model_densenet121.add(
         )
     )
 )
-
 
 
 # %% id="it66z3CISYIt"
@@ -3653,7 +3577,6 @@ model_densenet121.add(
 )
 
 
-
 # %% id="0PzfQ_aOSdPe"
 # Callbacks
 
@@ -3681,7 +3604,6 @@ CB.append(
 )
 
 
-
 # %% id="Qv6ys4ghSen9"
 # Compile
 
@@ -3690,7 +3612,6 @@ optimizer = "Adam"
 model_densenet121.compile(
     optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"]
 )
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="9phKwPbvSf4l" outputId="89acb4c7-f58e-4e9e-9f94-e7d651daba75"
@@ -3707,7 +3628,6 @@ history_densenet121 = model_densenet121.fit(
 )
 
 
-
 # %% id="h0Cbk8INSifF"
 # Enregistrement du modèle
 
@@ -3718,7 +3638,6 @@ pickle.dump(model_densenet121, pickle_out)
 pickle_out.close()
 
 
-
 # %% id="bVmysuWgSklo"
 # Enregistrement de l'historique
 
@@ -3727,10 +3646,8 @@ pickle.dump(history_densenet121, pickle_out)
 pickle_out.close()
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="3hskaViHSqNP" outputId="ac89457d-ad09-4017-a4af-67f164315dc0"
 model_densenet121.summary()
-
 
 
 # %% id="DtbjrHWfSrd1"
@@ -3739,7 +3656,6 @@ model_densenet121.summary()
 train_acc = history_densenet121.history["accuracy"]
 
 val_acc = history_densenet121.history["val_accuracy"]
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="UP5vaZzpSvLr" outputId="b19e35fc-dc7b-42c6-8799-d60ab5e74f70"
@@ -3751,12 +3667,10 @@ plt.grid(True)
 plt.show()
 
 
-
 # %% id="v2lmTT4sSySR"
 train_loss = history_densenet121.history["loss"]
 
 val_loss = history_densenet121.history["val_loss"]
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="pMbojWMQSzem" outputId="27f68196-6479-4863-995c-bc1c19590c40"
@@ -3768,22 +3682,18 @@ plt.grid(True)
 plt.show()
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="DQUKB0gqS0yz" outputId="2bfa68c3-7950-4273-d52a-f33e34375285"
 # Prédictions du modèle
 
 probs_pred_densenet121 = model_densenet121.predict(X_dnet121_test)
 
 
-
 # %% id="Drs-yP_IS3RO"
 Y_pred_densenet121 = np.argmax(probs_pred_densenet121, axis=1)
 
 
-
 # %% id="ubfeaywBS4Vu"
 Y_test_densenet121_sparse = np.argmax(Y_dnet121_test, axis=1)
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="EvyEqp3nS5Ts" outputId="842f2e1f-f3eb-4b93-bb75-8bdade758ed1"
@@ -3796,7 +3706,6 @@ conf_matrix_densenet121 = confusion_matrix(
 print(conf_matrix_densenet121)
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="iZYdwSOfS-td" outputId="b359e77a-557a-4fb2-9343-e075f49843f7"
 from sklearn.metrics import classification_report
 
@@ -3807,7 +3716,6 @@ class_report_densenet121 = classification_report(
 print(class_report_densenet121)
 
 
-
 # %% id="sayDnb0BTAyk"
 # Implémentation du DenseNet121 sans geler aucun calque
 
@@ -3816,10 +3724,8 @@ base_densenet121_nf = tf.keras.applications.DenseNet121(
 )
 
 
-
 # %% id="DQKa0OxSTCLM"
 model_densenet121_nf = tf.keras.models.Sequential()
-
 
 
 # %% id="hycFvrtDTDNM"
@@ -3830,7 +3736,6 @@ model_densenet121_nf.add(
         )
     )
 )
-
 
 
 # %% id="9id8c6RKTEkU"
@@ -3860,7 +3765,6 @@ model_densenet121_nf.add(
 )
 
 
-
 # %% id="lNjfv5pBTGmN"
 # Compile
 
@@ -3869,7 +3773,6 @@ optimizer = "Adam"
 model_densenet121_nf.compile(
     optimizer=optimizer, loss="categorical_crossentropy", metrics=["accuracy"]
 )
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="jomeYAzATIHk" outputId="0f61b76f-a069-4f15-edae-fe924c94ff18"
@@ -3886,7 +3789,6 @@ history_densenet121_nf = model_densenet121_nf.fit(
 )
 
 
-
 # %% id="022sFPnUTLJW"
 # Enregistrement du modèle et de l'historique
 
@@ -3897,7 +3799,6 @@ pickle.dump(model_densenet121_nf, pickle_out)
 pickle_out.close()
 
 
-
 # %% [markdown] id="jsiO64OSodCV"
 #
 
@@ -3906,17 +3807,14 @@ pickle_in = open("/content/drive/MyDrive/BD/model_densenet121_nf.pckl", "rb")
 model_densenet121_nf = pickle.load(pickle_in)
 
 
-
 # %% id="H1-7B_M3TOU9"
 pickle_out = open("/content/drive/MyDrive/BD/history_densenet121_nf.pckl", "wb")
 pickle.dump(history_densenet121_nf, pickle_out)
 pickle_out.close()
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="kRvKvJzJTPc1" outputId="27f3f72d-4f43-4f0d-89bc-8f5043a8f11f"
 model_densenet121_nf.summary()
-
 
 
 # %% id="nx6ZJRc6TQrk"
@@ -3925,7 +3823,6 @@ model_densenet121_nf.summary()
 train_acc_nf = history_densenet121_nf.history["accuracy"]
 
 val_acc_nf = history_densenet121_nf.history["val_accuracy"]
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="AKtBXL-cTROc" outputId="5980158a-6bda-44cd-d59a-9366e09a5dda"
@@ -3937,12 +3834,10 @@ plt.grid(True)
 plt.show()
 
 
-
 # %% id="kZd5Hc2WTSft"
 train_loss_nf = history_densenet121_nf.history["loss"]
 
 val_loss_nf = history_densenet121_nf.history["val_loss"]
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 452} id="XXRMGJW_TTrd" outputId="d0cf036e-68d0-4dac-c9e7-a486ecebddca"
@@ -3954,22 +3849,18 @@ plt.grid(True)
 plt.show()
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="0AtuSTMUTVL9" outputId="2c8cd655-e02a-4f6b-a549-db0e5097f577"
 # Prédictions du modèle
 
 probs_pred_densenet121_nf = model_densenet121_nf.predict(X_dnet121_test)
 
 
-
 # %% id="2iP-PLlxTWrN"
 Y_pred_densenet121_nf = np.argmax(probs_pred_densenet121_nf, axis=1)
 
 
-
 # %% id="Qy3TZd8UTYIs"
 Y_test_densenet121_sparse = np.argmax(Y_dnet121_test, axis=1)
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="h8_XoEICWC8P" outputId="5a7cf807-c7bf-4630-a7f1-d76d59f44e19"
@@ -3984,7 +3875,6 @@ conf_matrix_densenet121_nf = confusion_matrix(
 print(conf_matrix_densenet121_nf)
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="KdCOw6pXWEU0" outputId="fa7163f0-249a-40d6-9085-30e6b0b7c503"
 from sklearn.metrics import classification_report
 
@@ -3995,14 +3885,12 @@ class_report_densenet121_nf = classification_report(
 print(class_report_densenet121_nf)
 
 
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="IeBRK6m1WF14" outputId="2f2cd707-8011-4449-a925-7574c6b19478"
 from imblearn.metrics import classification_report_imbalanced
 
 print(
     classification_report_imbalanced(Y_test_densenet121_sparse, Y_pred_densenet121_nf)
 )
-
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 449} id="FcHGb-WqWHIb" outputId="91145d70-4c38-48fe-bfff-2a22365a900f"
@@ -4023,7 +3911,6 @@ for i in range(8):
         + saved_labels[Y_pred_densenet121_nf[k]]
     )
 plt.show()
-
 
 
 # %% [markdown] id="nH8jekp8-E3B" jp-MarkdownHeadingCollapsed=true

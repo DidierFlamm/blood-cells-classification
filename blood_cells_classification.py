@@ -123,9 +123,9 @@ TUNE_XGB = False  # default = True
 TUNE_LGBM = True  # default = True
 TUNE_CAT = False  # default = True
 
-CALIB = True  # default = True
+CALIB_RF = True  # default = True
+CALIB_XGB = False  # default = True
 FINAL_EVAL = True  # default = True
-FINAL_TRAIN = False  # default = True
 
 
 # Taille des images après pre-process
@@ -1963,6 +1963,8 @@ if PERF_ML:
 encoder = LabelEncoder()
 y_res_encoded = encoder.fit_transform(y_res)
 y_res_train_valid_encoded = encoder.transform(y_res_train_valid)
+y_sample_train_valid_encoded = encoder.transform(y_sample_train_valid)
+y_bin_train_valid_encoded = encoder.transform(y_bin_train_valid)
 
 # Sauvegarder
 path = os.path.join(PATH_JOBLIB, "labelencoder_trainvalid_v1.joblib")
@@ -2440,7 +2442,7 @@ if TUNE_XGB:
 # ### Random Forest
 
 # %%
-if CALIB:
+if CALIB_RF:
 
     # charger
 
@@ -2461,10 +2463,27 @@ if CALIB:
         n_jobs=n_jobs,
     )
 
-    sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
-    calibrated_rf.fit(
-        X_res_train_valid_flat, y_res_train_valid_encoded, sample_weight=sample_weights
-    )
+    if TUNE_DS == "RES":
+        sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
+        calibrated_rf.fit(
+            X_res_train_valid_flat,
+            y_res_train_valid_encoded,
+            sample_weight=sample_weights,
+        )
+    elif TUNE_DS == "SAM":
+        sample_weights = compute_sample_weight("balanced", y_sample_train_valid_encoded)
+        calibrated_rf.fit(
+            X_sample_train_valid_flat,
+            y_sample_train_valid_encoded,
+            sample_weight=sample_weights,
+        )
+    elif TUNE_DS == "BIN":
+        sample_weights = compute_sample_weight("balanced", y_bin_train_valid_encoded)
+        calibrated_rf.fit(
+            X_bin_train_valid_flat,
+            y_bin_train_valid_encoded,
+            sample_weight=sample_weights,
+        )
 
     # sauvegarder
     path = os.path.join(
@@ -2478,7 +2497,7 @@ if CALIB:
 # ### XGBoost
 
 # %%
-if CALIB:
+if CALIB_XGB:
     # charger
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
     best_xgb = joblib.load(path)
@@ -2496,10 +2515,27 @@ if CALIB:
         n_jobs=n_jobs,
     )
 
-    sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
-    calibrated_xgb.fit(
-        X_res_train_valid_flat, y_res_train_valid_encoded, sample_weight=sample_weights
-    )
+    if TUNE_DS == "RES":
+        sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
+        calibrated_xgb.fit(
+            X_res_train_valid_flat,
+            y_res_train_valid_encoded,
+            sample_weight=sample_weights,
+        )
+    elif TUNE_DS == "SAM":
+        sample_weights = compute_sample_weight("balanced", y_sample_train_valid_encoded)
+        calibrated_xgb.fit(
+            X_sample_train_valid_flat,
+            y_sample_train_valid_encoded,
+            sample_weight=sample_weights,
+        )
+    elif TUNE_DS == "BIN":
+        sample_weights = compute_sample_weight("balanced", y_bin_train_valid_encoded)
+        calibrated_xgb.fit(
+            X_bin_train_valid_flat,
+            y_bin_train_valid_encoded,
+            sample_weight=sample_weights,
+        )
 
     # sauvegarder
     path = os.path.join(

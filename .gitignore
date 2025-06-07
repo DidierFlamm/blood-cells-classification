@@ -1,6 +1,7 @@
 # Virtual environment folder
 venv/
 test_env/
+tf/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

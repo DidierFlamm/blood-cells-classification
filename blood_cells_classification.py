@@ -162,9 +162,11 @@ PATH_BIN = "/home/did/Windows/Downloads/binarized"
 
 # Stockage des modèles (ou poids) entraînés
 PATH_JOBLIB = "/home/did/Windows/Downloads/joblib"
+os.makedirs(PATH_JOBLIB, exist_ok=True)
 
 # Stockage des modèles (ou poids) entraînés
 PATH_KERAS = "/home/did/Windows/Downloads/keras"
+os.makedirs(PATH_KERAS, exist_ok=True)
 
 
 
@@ -2885,6 +2887,9 @@ if FINAL_EVAL:
 import os
 import matplotlib.pyplot as plt
 from typing import Tuple, Any
+from datetime import datetime
+from sklearn.utils.class_weight import compute_class_weight
+import numpy as np
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
@@ -2894,7 +2899,8 @@ from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePoolin
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
-
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications.vgg16 import preprocess_input
 
 print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
 
@@ -2905,6 +2911,7 @@ target_size = (224, 224)
 def DidDataGen(
     directory_train,
     directory_valid,
+    directory_test,
     target_size=(224, 224),
     batch_size=32,
     shear_range=0.2,
@@ -2913,10 +2920,6 @@ def DidDataGen(
     horizontal_flip=True,
     vertical_flip=True,
 ):
-
-    from tensorflow.keras.preprocessing.image import ImageDataGenerator
-    from tensorflow.keras.applications.vgg16 import preprocess_input
-    import os
 
     train_datagen = ImageDataGenerator(
         preprocessing_function=preprocess_input,
@@ -2928,6 +2931,8 @@ def DidDataGen(
     )
 
     valid_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
+
+    test_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
 
     train_generator = train_datagen.flow_from_directory(
         directory=directory_train,
@@ -2943,6 +2948,14 @@ def DidDataGen(
         batch_size=batch_size,
     )
 
+    test_generator = test_datagen.flow_from_directory(
+        directory=directory_test,  # chemin vers ton dossier test
+        class_mode="sparse",  # ou "categorical" selon ton modèle / labels
+        target_size=target_size,  # la même taille que pour train/valid
+        batch_size=batch_size,
+        shuffle=False,  # important: ne pas mélanger les données test
+    )
+
     # compte le nb de sous-dossiers dans directory_train
     n_class = 0
     for file in os.listdir(directory_train):
@@ -2950,23 +2963,7 @@ def DidDataGen(
         if os.path.isdir(d):
             n_class += 1
 
-    return train_generator, valid_generator, n_class
-
-
-
-# %% colab={"base_uri": "https://localhost:8080/"} id="qK-TxDjX97rr" outputId="d00fcf0f-6eb8-41fe-a381-a91fd3383df0"
-train_generator, valid_generator, n_class = DidDataGen(
-    PATH_TRAIN,
-    PATH_VALID,
-    target_size=target_size,
-    batch_size=32,
-    shear_range=0.2,
-    zoom_range=0.2,
-    rotation_range=359,
-    horizontal_flip=True,
-    vertical_flip=True,
-)
-
+    return train_generator, valid_generator, test_generator, n_class
 
 
 # %% [markdown] id="n4KuJkGZ-fPR"
@@ -2980,13 +2977,14 @@ train_generator, valid_generator, n_class = DidDataGen(
 def DidVGG16(
     train_generator,
     valid_generator,
+    test_generator,
     n_class,
     n_layers_trainable=4,
     learning_rate=1e-4,
     nb_epochs=30,
     batch_size=32,
     model_eval=False,
-) -> Tuple[Any, Any, float]:
+) -> Tuple[Any, Any, Tuple]:
 
     # Modèle VGG16
     base_model = VGG16(weights="imagenet", include_top=False)
@@ -3026,15 +3024,27 @@ def DidVGG16(
     model.compile(
         optimizer=Adam(learning_rate=learning_rate),
         loss="sparse_categorical_crossentropy",
-        metrics=["acc"],
+        metrics=["accuracy"],
     )
 
-    # Entraînement du modèle
+    # Entraînement du modèle avec pondération des classes déséquilibrées
+
+    # labels des images dans le générateur
+    labels = train_generator.classes
+    # classes uniques
+    classes = np.unique(labels)
+    # calcul des poids
+    class_weights = compute_class_weight(
+        class_weight="balanced", classes=classes, y=labels
+    )
+    # dictionnaire attendu par model.fit()
+    class_weight_dict = dict(zip(classes, class_weights))
 
     print("Entraînement du modèle")
     history = model.fit(
         train_generator,
         epochs=nb_epochs,
+        class_weight=class_weight_dict,
         steps_per_epoch=train_generator.samples // batch_size,
         validation_data=valid_generator,
         validation_steps=valid_generator.samples // batch_size,
@@ -3088,21 +3098,37 @@ def DidVGG16(
         print(
             "\nEvaluation du modèle sur l'ensemble de valid augmenté par génération de données:"
         )
-        score = model.evaluate(valid_generator)
+        score = model.evaluate(test_generator)
         print("score =", score)
 
     else:
 
-        score = -1
+        score = tuple()
 
     return model, history, score
 
+
+
+# %%
+train_generator, valid_generator, test_generator, n_class = DidDataGen(
+    PATH_TRAIN,
+    PATH_VALID,
+    PATH_TEST,
+    target_size=target_size,
+    batch_size=32,
+    shear_range=0.2,
+    zoom_range=0.2,
+    rotation_range=359,
+    horizontal_flip=True,
+    vertical_flip=True,
+)
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="ThfDJFTSEWlZ" outputId="0ae36e53-ab85-400c-b35a-ba5faa663bfe"
 model, history, score = DidVGG16(
     train_generator,
     valid_generator,
+    test_generator,
     n_class,
     n_layers_trainable=4,
     learning_rate=1e-4,
@@ -3115,7 +3141,8 @@ model, history, score = DidVGG16(
 
 # %%
 # Sauvegarde du modèle entraîné
-path = os.path.join(PATH_KERAS, "model_4_64")
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(PATH_KERAS, f"model_lr_4_batch_64_{timestamp}")
 model.save(path + ".keras")
 
 

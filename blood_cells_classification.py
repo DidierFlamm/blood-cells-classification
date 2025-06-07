@@ -36,6 +36,7 @@ import inspect
 from pathlib import Path
 import matplotlib.pyplot as plt
 # %matplotlib inline
+import seaborn as sns
 import squarify
 import itertools
 import joblib
@@ -2615,7 +2616,7 @@ if FINAL_EVAL:
     path = os.path.join(PATH_JOBLIB, "labelencoder_trainvalid_v1.joblib")
     encoder = joblib.load(path)
 
-    model = calibrated_rf  # calibré et entraîné
+    model = calibrated_rf  # calibré et entraîné sur labels encodés
     print(model)
 
     # Prédiction sur test jamais utilisé jusqu'à présent
@@ -2630,8 +2631,11 @@ if FINAL_EVAL:
 
     y_res_pred = encoder.inverse_transform(y_res_pred_encoded)
     cm = pd.crosstab(y_res_test, y_res_pred)
+    # Matrice de confusion normalisée
+    cm_norm = cm.div(cm.sum(axis=1), axis=0)
     dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
     dict_report["balanced_accuracy"] = balanced_accuracy  # type: ignore
+    dict_report["log_loss"] = loss  # type: ignore
     df_report = pd.DataFrame(dict_report).T
 
     if verbose:
@@ -2648,8 +2652,28 @@ if FINAL_EVAL:
     path = os.path.join(PATH_JOBLIB, f"rf_confusion_matrix_{timestamp}.csv")
     cm.to_csv(path)
 
+    cm_norm.to_csv(
+        os.path.join(PATH_JOBLIB, f"rf_confusion_matrix_normalized_{timestamp}.csv")
+    )
+
     path = os.path.join(PATH_JOBLIB, f"rf_classification_report_{timestamp}.csv")
     df_report.to_csv(path)
+
+    # Visualisation confusion matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Greens")
+    plt.title("Confusion Matrix")
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap="Blues")
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
+    plt.title("Normalized Confusion Matrix")
+    plt.show()
 
 
 
@@ -2686,6 +2710,7 @@ if FINAL_EVAL:
     dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
     # Ajout de balanced accuracy au classification report
     dict_report["balanced_accuracy"] = balanced_accuracy  # type: ignore
+    dict_report["log_loss"] = loss  # type: ignore
     df_report = pd.DataFrame(dict_report).T
 
     if verbose:
@@ -2702,8 +2727,28 @@ if FINAL_EVAL:
     path = os.path.join(PATH_JOBLIB, f"xgb_confusion_matrix_{timestamp}.csv")
     cm.to_csv(path)
 
+    cm_norm.to_csv(
+        os.path.join(PATH_JOBLIB, f"xgb_confusion_matrix_normalized_{timestamp}.csv")
+    )
+
     path = os.path.join(PATH_JOBLIB, f"xgb_classification_report_{timestamp}.csv")
     df_report.to_csv(path)
+
+    # Visualisation confusion matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Greens")
+    plt.title("Confusion Matrix")
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap="Blues")
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
+    plt.title("Normalized Confusion Matrix")
+    plt.show()
 
 
 

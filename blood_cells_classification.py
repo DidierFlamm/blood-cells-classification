@@ -8,7 +8,7 @@
 #       format_version: '1.3'
 #       jupytext_version: 1.16.7
 #   kernelspec:
-#     display_name: py312
+#     display_name: venv
 #     language: python
 #     name: python3
 # ---
@@ -78,9 +78,7 @@ from skimage.filters import (
     threshold_sauvola,
     threshold_yen,
 )
-import tensorflow as tf
-from tensorflow.keras.layers import Input, Dense
-from tensorflow.keras.models import Model
+
 pd.set_option("future.no_silent_downcasting", True)  # silence a pandas future warning
 
 
@@ -89,6 +87,8 @@ pd.set_option("future.no_silent_downcasting", True)  # silence a pandas future w
 # ## Définition des paramètres
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="5droanoTmm_-" outputId="cbe5f4ba-bc28-495b-cfc6-1dfb69882bd1"
+import os
+
 # contrôler la verbosité
 verbose = True
 
@@ -114,6 +114,7 @@ random_state = 42  # default = 42
 
 # contrôler le chargement et la sauvegarde des datasets
 LOAD_RAW = False  # default = True
+SAVE_RAW_SPLITTED = False  # default = False
 SAVE_RES = False  # default = False
 SAVE_SUB = False  # default = False
 LOAD_RES = True  # default = False
@@ -161,8 +162,9 @@ PATH_BIN = "/home/did/Windows/Downloads/binarized"
 
 # Stockage des modèles (ou poids) entraînés
 PATH_JOBLIB = "/home/did/Windows/Downloads/joblib"
-# S'assurer que PATH_JOBLIB sinon bug quand pd.to_csv
-os.makedirs(PATH_JOBLIB, exist_ok=True)
+
+# Stockage des modèles (ou poids) entraînés
+PATH_KERAS = "/home/did/Windows/Downloads/keras"
 
 
 
@@ -1556,7 +1558,7 @@ data_viz(path=PATH_RAW)
 
 # %%
 # Load raw images without duplicates
-if LOAD_RAW:
+if not LOAD_RAW:
     X, y, names = load_images(
         PATH_RAW,
         target_size=None,
@@ -1565,6 +1567,70 @@ if LOAD_RAW:
         plot_duplicates=True,
     )
 
+
+
+# %%
+if LOAD_RAW and SAVE_RAW_SPLITTED:
+
+    # split train_valid / test (15%)
+    (
+        X_train_valid,
+        X_test,
+        y_train_valid,
+        y_test,
+        names_train_valid,
+        names_test,
+    ) = train_test_split(
+        X,
+        y,
+        names,
+        test_size=TEST_SPLIT,
+        stratify=y,
+        random_state=random_state,
+    )
+
+    # split train (70%) / valid (15%)
+
+    valid_ratio = VALID_SPLIT / (1 - TEST_SPLIT)
+
+    X_train, X_valid, y_train, y_valid, names_train, names_valid = train_test_split(
+        X_train_valid,
+        y_train_valid,
+        names_train_valid,
+        test_size=valid_ratio,
+        stratify=y_train_valid,
+        random_state=random_state,
+    )
+
+    save_images(
+        PATH_TRAIN,
+        X_train,
+        y_train,
+        names_train,
+        target_size=None,
+        overwrite=False,
+        verbose=True,
+    )
+
+    save_images(
+        PATH_VALID,
+        X_valid,
+        y_valid,
+        names_valid,
+        target_size=None,
+        overwrite=False,
+        verbose=True,
+    )
+
+    save_images(
+        PATH_TEST,
+        X_test,
+        y_test,
+        names_test,
+        target_size=None,
+        overwrite=False,
+        verbose=True,
+    )
 
 
 # %% [markdown]
@@ -2815,11 +2881,31 @@ if FINAL_EVAL:
 # Génération d'images à partir d'un répertoire d'images d’entraînement et de valid
 
 
+# %%
+import os
+import matplotlib.pyplot as plt
+from typing import Tuple, Any
+
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
+import tensorflow as tf
+from tensorflow.keras.applications.vgg16 import VGG16
+from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
+
+
+print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
+
+target_size = (224, 224)
+
+
 # %% id="i9E_PKsK9P3n"
 def DidDataGen(
     directory_train,
     directory_valid,
-    target_size=(100, 100),
+    target_size=(224, 224),
     batch_size=32,
     shear_range=0.2,
     zoom_range=0.2,
@@ -2872,7 +2958,7 @@ def DidDataGen(
 train_generator, valid_generator, n_class = DidDataGen(
     PATH_TRAIN,
     PATH_VALID,
-    target_size=(100, 100),
+    target_size=target_size,
     batch_size=32,
     shear_range=0.2,
     zoom_range=0.2,
@@ -2900,14 +2986,7 @@ def DidVGG16(
     nb_epochs=30,
     batch_size=32,
     model_eval=False,
-):
-
-    from tensorflow.keras.applications.vgg16 import VGG16
-    from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D
-    from tensorflow.keras.optimizers import Adam
-    from tensorflow.keras.models import Model, Sequential
-    from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
-    import matplotlib.pyplot as plt
+) -> Tuple[Any, Any, float]:
 
     # Modèle VGG16
     base_model = VGG16(weights="imagenet", include_top=False)
@@ -3005,19 +3084,23 @@ def DidVGG16(
     print("\n", model.summary())
 
     # Evaluation du modèle (un peu long donc désactivée par défaut)
-    if model_eval == True:
+    if model_eval:
         print(
             "\nEvaluation du modèle sur l'ensemble de valid augmenté par génération de données:"
         )
         score = model.evaluate(valid_generator)
-        return model, history, score
+        print("score =", score)
+
     else:
-        return model, history
+
+        score = -1
+
+    return model, history, score
 
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="ThfDJFTSEWlZ" outputId="0ae36e53-ab85-400c-b35a-ba5faa663bfe"
-model_4_64, _, _ = DidVGG16(
+model, history, score = DidVGG16(
     train_generator,
     valid_generator,
     n_class,
@@ -3027,8 +3110,13 @@ model_4_64, _, _ = DidVGG16(
     batch_size=64,
     model_eval=True,
 )
-DidSave(model_4_64, "/content/drive/MyDrive/BD/model_4_layers_64_batch")
 
+
+
+# %%
+# Sauvegarde du modèle entraîné
+path = os.path.join(PATH_KERAS, "model_4_64")
+model.save(path + ".keras")
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="-RXalbGE-ymZ" outputId="be03837b-7194-4361-d8aa-9d0928bb3e91"

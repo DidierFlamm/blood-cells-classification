@@ -122,7 +122,7 @@ TUNE_XGB = False  # default = True
 TUNE_LGBM = True  # default = True
 TUNE_CAT = False  # default = True
 
-CALIB = False  # default = True
+CALIB = True  # default = True
 FINAL_EVAL = True  # default = True
 FINAL_TRAIN = False  # default = True
 
@@ -2432,7 +2432,7 @@ if TUNE_XGB:
 
 
 # %% [markdown]
-# ## Entraînement et Calibration par CV avant l'évaluation finale
+# ## Entraînement et Calibration par CV
 # on Train+Valid sets
 
 # %% [markdown]
@@ -2446,15 +2446,17 @@ if CALIB:
     path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
     best_rf_grid_cv = joblib.load(path)
 
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
-
-    model = clone(best_rf_grid_cv)  # clone pour avoir le modèle non entraîné
+    model = clone(best_rf_grid_cv)
+    # clone pour avoir le modèle non entraîné (a priori inutile car CalibratedClassifierCV utilise un clone de l'estimator...)
     print(model)
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
 
     calibrated_rf = CalibratedClassifierCV(
         estimator=model,
-        method="sigmoid",
+        method="isotonic",
         cv=cv,  # on pourrait utiliser cv=5 directement qui est stratifié mais sans shuffle...
+        ensemble=False,  # ensemble = True est plus performant mais produit 5 couples (estimator, calibrator...)
         n_jobs=n_jobs,
     )
 
@@ -2464,7 +2466,9 @@ if CALIB:
     )
 
     # sauvegarder
-    path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib")
+    path = os.path.join(
+        PATH_JOBLIB, "rf_final_calibrated_isotonic_cv_trainvalid_v1.joblib"
+    )
     joblib.dump(calibrated_rf, path)
 
 
@@ -2473,6 +2477,38 @@ if CALIB:
 # ### XGBoost
 
 # %%
+if CALIB:
+    # charger
+    path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
+    best_xgb = joblib.load(path)
+
+    model = clone(best_xgb)
+    print(model)
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+
+    calibrated_xgb = CalibratedClassifierCV(
+        estimator=model,
+        method="isotonic",
+        cv=cv,
+        ensemble=False,
+        n_jobs=n_jobs,
+    )
+
+    sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
+    calibrated_xgb.fit(
+        X_res_train_valid_flat, y_res_train_valid_encoded, sample_weight=sample_weights
+    )
+
+    # sauvegarder
+    path = os.path.join(
+        PATH_JOBLIB, "xgb_final_calibrated_isotonic_cv_trainvalid_v1.joblib"
+    )
+    joblib.dump(model, path)
+
+
+# %%
+"""
 if CALIB:
 
     # charger
@@ -2490,11 +2526,13 @@ if CALIB:
     # sauvegarder
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_fitted_train_v1.joblib")
     joblib.dump(model, path)
+"""
 
 
 
 # %%
-if not CALIB:
+"""
+if CALIB:
 
     # charger
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_fitted_train_v1.joblib")
@@ -2519,6 +2557,7 @@ if not CALIB:
     # sauvegarder
     path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
     joblib.dump(calibrated_xgb, path)
+"""
 
 
 # %% [markdown]
@@ -2568,16 +2607,20 @@ joblib.dump(calibrated_xgb_cv, path)
 if FINAL_EVAL:
 
     # Charger
-
-    path = os.path.join(PATH_JOBLIB, "rf_calibrated_sigmoid_cv_trainvalid_v1.joblib")
+    path = os.path.join(
+        PATH_JOBLIB, "rf_final_calibrated_isotonic_cv_trainvalid_v1.joblib"
+    )
     calibrated_rf = joblib.load(path)
+
     path = os.path.join(PATH_JOBLIB, "labelencoder_trainvalid_v1.joblib")
     encoder = joblib.load(path)
 
     model = calibrated_rf  # calibré et entraîné
     print(model)
 
-    y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
+    # Prédiction sur test jamais utilisé jusqu'à présent
+    y_res_pred_encoded = model.predict(X_res_test_flat)
+
     y_res_test_encoded = encoder.transform(y_res_test)
     accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
     balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
@@ -2585,12 +2628,9 @@ if FINAL_EVAL:
     y_res_prob_encoded = model.predict_proba(X_res_test_flat)
     loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
 
-    y_res_pred = encoder.inverse_transform(
-        y_res_pred_encoded
-    )  # Décodage des prédictions
+    y_res_pred = encoder.inverse_transform(y_res_pred_encoded)
     cm = pd.crosstab(y_res_test, y_res_pred)
     dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
-    # Ajout de balanced accuracy au classification report
     dict_report["balanced_accuracy"] = balanced_accuracy  # type: ignore
     df_report = pd.DataFrame(dict_report).T
 
@@ -2621,24 +2661,28 @@ if FINAL_EVAL:
 
     # Charger
 
-    path = os.path.join(PATH_JOBLIB, "xgb_calibrated_sigmoid_valid_v1.joblib")
+    path = os.path.join(
+        PATH_JOBLIB, "xgb_final_calibrated_isotonic_cv_trainvalid_v1.joblib"
+    )
     calibrated_xgb = joblib.load(path)
 
-    model = calibrated_xgb  # calibré et entraîné
+    model = calibrated_xgb  # calibré et entraîné sur labels encodés
     print(model)
 
-    y_res_pred_encoded = model.predict(X_res_test_flat)  # Prédiction sur test
+    y_res_pred_encoded = model.predict(X_res_test_flat)
     y_res_test_encoded = encoder.transform(y_res_test)
+
     accuracy = accuracy_score(y_res_test_encoded, y_res_pred_encoded)
     balanced_accuracy = balanced_accuracy_score(y_res_test_encoded, y_res_pred_encoded)
 
     y_res_prob_encoded = model.predict_proba(X_res_test_flat)
     loss = log_loss(y_res_test_encoded, y_res_prob_encoded)
 
-    y_res_pred = encoder.inverse_transform(
-        y_res_pred_encoded
-    )  # Décodage des prédictions
+    y_res_pred = encoder.inverse_transform(y_res_pred_encoded)
     cm = pd.crosstab(y_res_test, y_res_pred)
+    # Matrice de confusion normalisée
+    cm_norm = cm.div(cm.sum(axis=1), axis=0)
+
     dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
     # Ajout de balanced accuracy au classification report
     dict_report["balanced_accuracy"] = balanced_accuracy  # type: ignore
@@ -2660,102 +2704,6 @@ if FINAL_EVAL:
 
     path = os.path.join(PATH_JOBLIB, f"xgb_classification_report_{timestamp}.csv")
     df_report.to_csv(path)
-
-
-
-# %% [markdown]
-# ## Entraînement final sur toutes les données puis calibration
-
-# %% [markdown]
-# ### Random Forest
-
-# %%
-if FINAL_TRAIN:
-
-    # charger
-    path = os.path.join(PATH_JOBLIB, "rf_tuned_gridcv_trainvalid_fitted_v1.joblib")
-    best_rf_grid_cv = joblib.load(path)
-
-    model = clone(best_rf_grid_cv)
-    print(model)
-
-    sample_weights = compute_sample_weight("balanced", y_res_encoded)
-    model.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
-
-    # sauvegarder le modèle non calibré
-    path = os.path.join(PATH_JOBLIB, "rf_final_fitted_all_v1.joblib")
-    joblib.dump(model, path)
-
-    frozen_model = FrozenEstimator(model)
-
-    # calibration
-    calibrated_rf = CalibratedClassifierCV(
-        estimator=frozen_model,  # type: ignore
-        method="sigmoid",  # ou 'sigmoid'
-        cv=None,
-        n_jobs=n_jobs,
-    )
-
-    calibrated_rf.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
-
-    # sauvegarder le modèle calibré
-    path = os.path.join(PATH_JOBLIB, "rf_final_calibrated_sigmoid_all_v1.joblib")
-    joblib.dump(calibrated_rf, path)
-
-    # différence de taille des 2 versions
-    uncalibrated_path = os.path.join(PATH_JOBLIB, "rf_final_fitted_all_v1.joblib")
-    calibrated_path = os.path.join(
-        PATH_JOBLIB, "rf_final_calibrated_sigmoid_all_v1.joblib"
-    )
-
-    print(f"Uncalibrated: {os.path.getsize(uncalibrated_path)/1e6:.2f} MB")
-    print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
-
-
-
-# %% [markdown]
-# ### XGBoost
-
-# %%
-if FINAL_TRAIN:
-
-    # charger
-    path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
-    best_xgb = joblib.load(path)
-
-    model = clone(best_xgb)
-    print(model)
-
-    sample_weights = compute_sample_weight("balanced", y_res_encoded)
-    model.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
-
-    # sauvegarder le modèle entraîné mais non calibré
-    path = os.path.join(PATH_JOBLIB, "xgb_final_fitted_all_v1.joblib")
-    joblib.dump(model, path)
-
-    frozen_model = FrozenEstimator(model)
-
-    # calibration
-    calibrated_xgb = CalibratedClassifierCV(
-        estimator=frozen_model,  # type: ignore
-        method="sigmoid",  # ou 'sigmoid'
-        cv=None,
-        n_jobs=n_jobs,
-    )
-    calibrated_xgb.fit(X_res_flat, y_res_encoded, sample_weight=sample_weights)
-
-    # sauvegarder le modèle calibré
-    path = os.path.join(PATH_JOBLIB, "xgb_final_calibrated_sigmoid_all_v1.joblib")
-    joblib.dump(calibrated_rf, path)
-
-    # différence de taille des 2 versions
-    uncalibrated_path = os.path.join(PATH_JOBLIB, "xgb_final_fitted_all_v1.joblib")
-    calibrated_path = os.path.join(
-        PATH_JOBLIB, "xgb_final_calibrated_sigmoid_all_v1.joblib"
-    )
-
-    print(f"Uncalibrated: {os.path.getsize(uncalibrated_path)/1e6:.2f} MB")
-    print(f"Calibrated:   {os.path.getsize(calibrated_path)/1e6:.2f} MB")
 
 
 

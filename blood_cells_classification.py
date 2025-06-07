@@ -2451,7 +2451,6 @@ if CALIB_RF:
 
     model = clone(best_rf_grid_cv)
     # clone pour avoir le modèle non entraîné (a priori inutile car CalibratedClassifierCV utilise un clone de l'estimator...)
-    print(model)
 
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
 
@@ -2462,6 +2461,8 @@ if CALIB_RF:
         ensemble=False,  # ensemble = True est plus performant mais produit 5 couples (estimator, calibrator...)
         n_jobs=n_jobs,
     )
+
+    print(calibrated_rf)
 
     if TUNE_DS == "RES":
         sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
@@ -2497,13 +2498,12 @@ if CALIB_RF:
 # ### XGBoost
 
 # %%
-if CALIB_XGB:
+if not CALIB_XGB:
     # charger
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
     best_xgb = joblib.load(path)
 
     model = clone(best_xgb)
-    print(model)
 
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
 
@@ -2514,6 +2514,8 @@ if CALIB_XGB:
         ensemble=False,
         n_jobs=n_jobs,
     )
+
+    print(calibrated_xgb)
 
     if TUNE_DS == "RES":
         sample_weights = compute_sample_weight("balanced", y_res_train_valid_encoded)
@@ -2541,7 +2543,7 @@ if CALIB_XGB:
     path = os.path.join(
         PATH_JOBLIB, "xgb_final_calibrated_isotonic_cv_trainvalid_v1.joblib"
     )
-    joblib.dump(model, path)
+    joblib.dump(calibrated_xgb, path)
 
 
 # %%

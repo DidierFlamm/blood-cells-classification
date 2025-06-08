@@ -30,7 +30,9 @@ import time
 from datetime import datetime
 import os
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Masque warnings/info de tensorflow
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Masque info(1), warning(2), error(3) de tensorflow
+
+
 from IPython.display import display, HTML
 import random
 from collections import defaultdict, Counter
@@ -3036,6 +3038,8 @@ def DidVGG16(
     model_eval=False,
 ) -> Tuple[Any, Any, Tuple]:
 
+    start_time = time.perf_counter()
+
     # Modèle VGG16
     base_model = VGG16(weights="imagenet", include_top=False)
 
@@ -3143,13 +3147,20 @@ def DidVGG16(
 
     print("\n", model.summary())
 
+    duration = int(time.perf_counter() - start_time)
+
+    print("✅ Modèle entraîné en", duration, "s")
+
     # Evaluation du modèle (un peu long donc désactivée par défaut)
     if model_eval:
-        print(
-            "\nEvaluation du modèle sur l'ensemble de valid augmenté par génération de données:"
-        )
+        print("\nEvaluation du modèle sur l'ensemble de test:")
+
+        start_time = time.perf_counter()
         score = model.evaluate(test_generator)
-        print("loss    =", score[0])
+
+        duration = int(time.perf_counter() - start_time)
+        print("Modèle évalué en", duration, "s")
+        print("\nloss    =", score[0])
         print("accuracy=", score[1])
 
     else:
@@ -3177,116 +3188,292 @@ train_generator, valid_generator, test_generator, n_class = DidDataGen(
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="ThfDJFTSEWlZ" outputId="0ae36e53-ab85-400c-b35a-ba5faa663bfe"
+n_layers = 0
+batch_size = 64
+
 model, history, score = DidVGG16(
     train_generator,
     valid_generator,
     test_generator,
     n_class,
-    n_layers_trainable=4,
+    n_layers_trainable=n_layers,
     learning_rate=1e-4,
     nb_epochs=30,
-    batch_size=64,
+    batch_size=batch_size,
     model_eval=True,
 )
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
 
 
 
 # %%
 # Sauvegarde du modèle entraîné
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(PATH_KERAS, f"model_lr_4_batch_64_{timestamp}")
+path = os.path.join(PATH_KERAS, f"model_layers_4_batch_64_{timestamp}")
 model.save(path + ".keras")
 
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="-RXalbGE-ymZ" outputId="be03837b-7194-4361-d8aa-9d0928bb3e91"
-model_0_64, _, _ = DidVGG16(
+n_layers = 4
+batch_size = 64
+
+model, history, score = DidVGG16(
     train_generator,
     valid_generator,
+    test_generator,
     n_class,
-    n_layers_trainable=0,
+    n_layers_trainable=n_layers,
     learning_rate=1e-4,
     nb_epochs=30,
-    batch_size=64,
+    batch_size=batch_size,
     model_eval=True,
 )
-DidSave(model_0_64, "/content/drive/MyDrive/BD/model_0_layers_64_batch")
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
 
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="uX1mpAVX_K7f" outputId="74f4ccaa-b945-4b39-b652-7f68a5bc6443"
-model_12_64, _, _ = DidVGG16(
+n_layers = 8
+batch_size = 64
+
+model, history, score = DidVGG16(
     train_generator,
     valid_generator,
+    test_generator,
     n_class,
-    n_layers_trainable=12,
+    n_layers_trainable=n_layers,
     learning_rate=1e-4,
     nb_epochs=30,
-    batch_size=64,
+    batch_size=batch_size,
     model_eval=True,
 )
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
 
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RuTkn5dy_Kmn" outputId="bb8f472a-07f0-4a68-bbf1-738f1d4e5133"
-model_21_32, _, _ = DidVGG16(
+n_layers = 13
+batch_size = 64
+
+model, history, score = DidVGG16(
     train_generator,
     valid_generator,
+    test_generator,
     n_class,
-    n_layers_trainable=21,
+    n_layers_trainable=n_layers,
     learning_rate=1e-4,
     nb_epochs=30,
-    batch_size=32,
+    batch_size=batch_size,
     model_eval=True,
 )
 
-
-
-# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="GlDfoafy_KNL" outputId="1c38dda1-aa93-4506-d233-84577f88ebff"
-model_21_64, _, _ = DidVGG16(
-    train_generator,
-    valid_generator,
-    n_class,
-    n_layers_trainable=21,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=64,
-    model_eval=True,
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
 )
-
-
-
-# %% [markdown] id="2KWHUPVNBBsI"
-# Sauvegarde des modèles (en cas de plantage de l'environnement pour saturation de RAM)
-
-
-# %% id="ZZZCBSTtBEfI"
-def DidSave(variable, fichier):
-    import pickle
-
-    f = open(fichier, "wb")
-    pickle.dump(variable, f)
-    f.close()
-
-
-def DidLoad(fichier):
-    import pickle
-
-    f = open(fichier, "rb")
-    variable = pickle.load(f)
-    f.close()
-    return variable
-
-
-
-# %% id="krYFcPi2Zpxs"
-# DidSave(model_12_64, '/content/drive/MyDrive/BD/model_12_layers_64_batch')
+model.save(path + ".keras")
 
 
 
 # %% id="vE5RV3y-B5ut"
-# DidSave(model_21_64, '/content/drive/MyDrive/BD/model_16_layers_64_batch')
+n_layers = 0
+batch_size = 32
 
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+
+# %%
+n_layers = 4
+batch_size = 32
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 8
+batch_size = 32
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 13
+batch_size = 32
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 0
+batch_size = 16
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 4
+batch_size = 16
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 8
+batch_size = 16
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 13
+batch_size = 16
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
 
 
 # %% [markdown] id="K4efqyWkApK3"

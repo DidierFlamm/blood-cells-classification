@@ -25,7 +25,7 @@
 # ## Import des librairies
 
 # %%
-from typing import Tuple, List, Dict, Optional, Union, TypeVar
+from typing import Tuple, List, Dict, Optional, Union, TypeVar, Any
 import time
 from datetime import datetime
 import os
@@ -73,7 +73,7 @@ from sklearn.metrics import (
     log_loss,
 )
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.utils.class_weight import compute_sample_weight
+from sklearn.utils.class_weight import compute_class_weight, compute_sample_weight
 from sklearn.calibration import CalibratedClassifierCV
 import xgboost as xgb
 from xgboost import XGBClassifier
@@ -3022,7 +3022,7 @@ def fit_DL_model(
     n_conv_layers_trainable=0,
     learning_rate=1e-4,
     nb_epochs=30,
-    batch_size=32,
+    # batch_size=32,
 ) -> Tuple[Any, Any, Tuple]:
 
     start_time = time.perf_counter()
@@ -3086,7 +3086,7 @@ def fit_DL_model(
         train_generator,
         epochs=nb_epochs,
         class_weight=class_weight_dict,
-        # steps_per_epoch=train_generator.samples // batch_size, #Keras calcule tout seul le steps per epoch
+        # steps_per_epoch=train_generator.samples // batch_size, #Keras calcule tout seul le steps per epoch ?
         validation_data=valid_generator,
         # validation_steps=valid_generator.samples // batch_size,
         callbacks=callbacks,
@@ -3125,20 +3125,15 @@ def fit_DL_model(
 
     duration = int(time.perf_counter() - start_time)
 
+    print(f"\n✅ Modèle entraîné en {duration} s, avec les paramètres initiaux:")
     print(
-        "\n✅ Modèle entraîné en",
-        duration,
-        "s  avec les paramètres:\n\t• couches convolutionnelles entraînées:",
-        n_conv_layers_trainable,
-        "/",
-        len(base_model.layers),
-        "\n\t• learning rate init",
-        learning_rate,
-        "\n\t• epochs            :",
-        nb_epochs,
-        "\n\t• batch size        :",
-        batch_size,
+        f"\t• batch size des flows des image generators : {train_generator.batch_size}"
     )
+    print(
+        f"\t• nb couches convolutionnelles entraînées   : {n_conv_layers_trainable} / {len(base_model.layers)}"
+    )
+    print(f"\t• learning rate : {learning_rate}")
+    print(f"\t• epochs        : {nb_epochs}")
 
     # Evaluation du modèle
     print("\nEvaluation du modèle sur l'ensemble de test:")
@@ -3151,12 +3146,14 @@ def fit_DL_model(
 
 
 # %%
+batch_size = 32
+
 train_generator, valid_generator, test_generator = DidDataGen(
     PATH_TRAIN,
     PATH_VALID,
     PATH_TEST,
     target_size=target_size,
-    batch_size=32,
+    batch_size=batch_size,
     shear_range=0.2,
     zoom_range=0.2,
     rotation_range=359,
@@ -3165,21 +3162,77 @@ train_generator, valid_generator, test_generator = DidDataGen(
 )
 
 
-
 # %%
-n_layers = 4
-batch_size = 128
+n_layers = 0
 
 model, history, score = fit_DL_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_class,
     n_conv_layers_trainable=n_layers,
     learning_rate=1e-4,
     nb_epochs=30,
-    batch_size=batch_size,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 2
+
+model, history, score = fit_DL_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 4
+
+model, history, score = fit_DL_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
+n_layers = 6
+
+model, history, score = fit_DL_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")

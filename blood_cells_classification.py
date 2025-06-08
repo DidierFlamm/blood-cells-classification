@@ -2925,17 +2925,6 @@ if FINAL_EVAL:
 
 # %% [markdown] id="q_VckjXO9EK6"
 # # IV. Deep Learning
-#
-# on utilisera les méthodes des modèles de DL pour la sauvegarde / chargement des poids uniquement
-#
-# TensorFlow/Keras    :
-#     model.save_weights('model_weights.h5')
-#     model.load_weights('model_weights.h5')
-#
-# PyTorch :
-#     torch.save(model.state_dict(), 'model_weights.pth')
-#     model.load_state_dict(torch.load('model_weights.pth'))
-#     model.eval()     # mode évaluation
 
 # %% [markdown] id="ACRHah0G9NnC"
 # ##1. VGG16
@@ -2945,17 +2934,16 @@ if FINAL_EVAL:
 
 
 # %%
-import os
-import matplotlib.pyplot as plt
-from typing import Tuple, Any
-from datetime import datetime
-from sklearn.utils.class_weight import compute_class_weight
-import numpy as np
+base_model = VGG16(weights="imagenet", include_top=False)
 
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+n_layers = len(base_model.layers)
+conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
+n_conv_layers = len(conv_layers)
+print(
+    f"{base_model.name} has {n_layers} layers in total, including {n_conv_layers} convolutional layers."
+)
 
-
-target_size = (224, 224)
+target_size = (224, 224)  # optimal pour VGG16
 
 
 # %% id="i9E_PKsK9P3n"
@@ -3026,30 +3014,28 @@ def DidDataGen(
 
 
 # %% id="Ao4qMxTl-kaG"
-def DidVGG16(
+def fit_DL_model(
+    base_model,
     train_generator,
     valid_generator,
     test_generator,
     n_class,
-    n_layers_trainable=4,
+    n_conv_layers_trainable=0,
     learning_rate=1e-4,
     nb_epochs=30,
     batch_size=32,
-    model_eval=False,
 ) -> Tuple[Any, Any, Tuple]:
 
     start_time = time.perf_counter()
 
-    # Modèle VGG16
-    base_model = VGG16(weights="imagenet", include_top=False)
-
-    # Freeze toutes les couches du VGG16 sauf les n dernières (si n différent de 0)
+    # Freeze toutes les couches du base_model
     for layer in base_model.layers:
         layer.trainable = False
 
-    if n_layers_trainable != 0:
-        for layer in base_model.layers[-n_layers_trainable:]:
-            layer.trainable = True
+    # Unfreeze les couches convolutionnelles selon n_conv_layers_trainable
+    conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
+    for layer in conv_layers[-n_conv_layers_trainable:]:
+        layer.trainable = True
 
     # Callbacks
     early_stopping = EarlyStopping(
@@ -3060,7 +3046,7 @@ def DidVGG16(
         factor=0.1,
         patience=3,
         min_delta=0.01,
-        cooldown=4,
+        cooldown=0,  # pas de cooldown nécessaire (patience = 3 suffit à assurer la durée des plateaux de lr donc la stabilité de l’entraînement)
         verbose=1,
     )
     callbacks = [reduce_learning_rate, early_stopping]
@@ -3108,9 +3094,11 @@ def DidVGG16(
     # Courbe de la fonction de coût et de précision en fonction de l'epoch
 
     print(
-        "\nCourbes de perte et de précision pour VGG16 avec les paramètres:\n # couches entraînées:",
-        n_layers_trainable,
-        "\n # learning rate init:",
+        "\nCourbes de perte et de précision pour VGG16 avec les paramètres:\n # couches convolutionnelles entraînées:",
+        n_conv_layers_trainable,
+        "/",
+        len(base_model.layers),
+        "\n # learning rate init",
         learning_rate,
         "\n # epochs            :",
         nb_epochs,
@@ -3149,23 +3137,13 @@ def DidVGG16(
 
     duration = int(time.perf_counter() - start_time)
 
-    print("✅ Modèle entraîné en", duration, "s")
+    print("\n✅ Modèle entraîné en", duration, "s")
 
-    # Evaluation du modèle (un peu long donc désactivée par défaut)
-    if model_eval:
-        print("\nEvaluation du modèle sur l'ensemble de test:")
-
-        start_time = time.perf_counter()
-        score = model.evaluate(test_generator)
-
-        duration = int(time.perf_counter() - start_time)
-        print("Modèle évalué en", duration, "s")
-        print("\nloss    =", score[0])
-        print("accuracy=", score[1])
-
-    else:
-
-        score = tuple()
+    # Evaluation du modèle
+    print("\nEvaluation du modèle sur l'ensemble de test:")
+    score = model.evaluate(test_generator)
+    print("loss     =", score[0])
+    print("accuracy =", score[1])
 
     return model, history, score
 
@@ -3207,14 +3185,6 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
     PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
 )
-model.save(path + ".keras")
-
-
-
-# %%
-# Sauvegarde du modèle entraîné
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(PATH_KERAS, f"model_layers_4_batch_64_{timestamp}")
 model.save(path + ".keras")
 
 
@@ -3316,6 +3286,29 @@ model.save(path + ".keras")
 
 
 # %%
+n_layers = 2
+batch_size = 32
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
 n_layers = 4
 batch_size = 32
 
@@ -3339,30 +3332,7 @@ model.save(path + ".keras")
 
 
 # %%
-n_layers = 8
-batch_size = 32
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 13
+n_layers = 6
 batch_size = 32
 
 model, history, score = DidVGG16(
@@ -3408,6 +3378,29 @@ model.save(path + ".keras")
 
 
 # %%
+n_layers = 2
+batch_size = 16
+
+model, history, score = DidVGG16(
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+    model_eval=True,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
+
+# %%
 n_layers = 4
 batch_size = 16
 
@@ -3431,30 +3424,7 @@ model.save(path + ".keras")
 
 
 # %%
-n_layers = 8
-batch_size = 16
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 13
+n_layers = 6
 batch_size = 16
 
 model, history, score = DidVGG16(

@@ -29,6 +29,8 @@ from typing import Tuple, List, Dict, Optional, Union, TypeVar
 import time
 from datetime import datetime
 import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"  # Masque warnings/info de tensorflow
 from IPython.display import display, HTML
 import random
 from collections import defaultdict, Counter
@@ -41,14 +43,17 @@ import seaborn as sns
 import squarify
 import itertools
 import joblib
-import cv2
+
+# import cv2
 from PIL import Image
 import numpy as np
 import pandas as pd
 import hashlib
 from tqdm import tqdm
 from scipy.stats import randint
-from scipy.ndimage import gaussian_filter1d
+from scipy.ndimage import uniform_filter, gaussian_filter1d
+
+# Machine Learning
 from sklearn import ensemble
 from sklearn.base import clone
 from sklearn.svm import SVC
@@ -72,14 +77,23 @@ import xgboost as xgb
 from xgboost import XGBClassifier
 from catboost import CatBoostClassifier
 from lightgbm import LGBMClassifier
-from skimage.filters import (
-    threshold_otsu,
-    threshold_niblack,
-    threshold_sauvola,
-    threshold_yen,
-)
 
-pd.set_option("future.no_silent_downcasting", True)  # silence a pandas future warning
+
+# Deep Learning
+import tensorflow as tf
+from tensorflow.keras.applications.vgg16 import VGG16
+from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications.vgg16 import preprocess_input
+
+print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
+
+pd.set_option(
+    "future.no_silent_downcasting", True
+)  # masque warning de pandas (future deprecation)
 
 
 
@@ -87,8 +101,6 @@ pd.set_option("future.no_silent_downcasting", True)  # silence a pandas future w
 # ## Définition des paramètres
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="5droanoTmm_-" outputId="cbe5f4ba-bc28-495b-cfc6-1dfb69882bd1"
-import os
-
 # contrôler la verbosité
 verbose = True
 
@@ -113,11 +125,11 @@ random_state = 42  # default = 42
 # use any int or None for no seed
 
 # contrôler le chargement et la sauvegarde des datasets
-LOAD_RAW = False  # default = True
+LOAD_RAW = True  # default = True
 SAVE_RAW_SPLITTED = False  # default = False
 SAVE_RES = False  # default = False
 SAVE_SUB = False  # default = False
-LOAD_RES = True  # default = False
+LOAD_RES = False  # default = False
 
 SAMPLE_SIZE = 2500  # default = 2500 : sub-dataset used for debugging
 PERF_ML = False  # default = True
@@ -126,9 +138,9 @@ TUNE_XGB = False  # default = True
 TUNE_LGBM = True  # default = True
 TUNE_CAT = False  # default = True
 
-CALIB_RF = True  # default = True
+CALIB_RF = False  # default = True
 CALIB_XGB = False  # default = True
-FINAL_EVAL = True  # default = True
+FINAL_EVAL = False  # default = True
 
 
 # Taille des images après pre-process
@@ -740,6 +752,71 @@ def flatten_dataset(X):
 
 
 # %%
+"""
+Les fonctions ci-dessous permettent de définir les seuils utilisés dans class ImagesBinarizer sans importer scikit-image
+Pour plus de précision, importer les fonctions de scikit-image au lieu de définir les fonctions ci-dessous :
+from skimage.filters import (
+    threshold_otsu,
+    threshold_niblack,
+    threshold_sauvola,
+    threshold_yen)
+"""
+
+
+def threshold_otsu(image, nbins=256):
+    hist, bin_edges = np.histogram(image.ravel(), bins=nbins)
+    hist = hist.astype(float)
+    hist /= hist.sum()
+
+    cumsum = np.cumsum(hist)
+    cummean = np.cumsum(hist * np.arange(nbins))
+    mean_total = cummean[-1]
+
+    numerator = (mean_total * cumsum - cummean) ** 2
+    denominator = cumsum * (1 - cumsum)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sigma_b_squared = numerator / denominator
+        sigma_b_squared[denominator == 0] = 0
+
+    idx = np.argmax(sigma_b_squared)
+    return bin_edges[idx]
+
+
+def threshold_yen(image, nbins=256):
+    image = image.ravel()
+    hist, bin_edges = np.histogram(image, bins=nbins, range=(0, 1))
+    hist = hist.astype(np.float64)
+    hist_norm = hist / hist.sum()
+
+    p1_sq = np.cumsum(hist_norm**2)
+    p2_sq = np.cumsum(hist_norm[::-1] ** 2)[::-1]
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        criterion = np.log(p1_sq[:-1] * p2_sq[1:])
+    threshold_idx = np.argmax(criterion)
+
+    t = (bin_edges[threshold_idx] + bin_edges[threshold_idx + 1]) / 2
+    return t
+
+
+def threshold_niblack(image, window_size=15, k=0.2):
+    image = image.astype(float)
+    mean = uniform_filter(image, window_size)
+    mean_sq = uniform_filter(image**2, window_size)
+    std = np.sqrt(mean_sq - mean**2)
+    return mean + k * std
+
+
+def threshold_sauvola(image, window_size=15, k=0.2, r=128):
+    image = image.astype(float)
+    mean = uniform_filter(image, window_size)
+    mean_sq = uniform_filter(image**2, window_size)
+    std = np.sqrt(mean_sq - mean**2)
+    return mean * (1 + k * ((std / r) - 1))
+
+
+
+# %%
 class ImagesBinarizer:
     """
     Binarizes image datasets using a fixed or computed threshold.
@@ -748,7 +825,7 @@ class ImagesBinarizer:
         fit(X):                     Compute global Otsu and Yen thresholds.
         transform(X):               Apply binarization using the selected threshold.
         fit_transform(X):           Fit then transform.
-        get_thresholds():           Returns Otsu, Niblack, Sauvola and Yen thresholds.
+        ########################get_thresholds():           Returns Otsu, Niblack, Sauvola and Yen thresholds.
         plot_threshold_analysis(X): Plot intensity distribution with threshold lines.
         show_samples(X, n_samples): Plot random binarized images.
         to_grayscale(X):            Convert a batch of images into grayscale images.
@@ -756,20 +833,14 @@ class ImagesBinarizer:
     Supports RGB, grayscale (2D/3D), and flattened (1D) images.
     """
 
-    def __init__(self, threshold: float | str = 0.5, window_size: int = 21):
+    def __init__(self, threshold: float | str = 0.5):
         """
         Parameters:
             threshold: str or float
                 'otsu', 'yen', 'niblack', 'sauvola' or float value for fixed threshold.
-            window_size: int (odd)
-                used to compute adaptative thresholds
         """
 
-        if window_size % 2 == 0:
-            raise ValueError("window_size must be odd.")
-
         self.threshold_param = threshold
-        self.window_size = window_size
         self.otsu_ = None
         self.yen_ = None
         self.threshold_ = None
@@ -847,25 +918,13 @@ class ImagesBinarizer:
 
         X_gray = self.to_grayscale(X)  # 2D or 3D
 
-        # Compute global-equivalent of adaptative thresholds
-        # niblack_thresholds = []
-        # sauvola_thresholds = []
-        # for img in tqdm(X_gray, desc = "Fitting"):
-        #    niblack_map = threshold_niblack(img, window_size=self.window_size)
-        #    sauvola_map = threshold_sauvola(img, window_size=self.window_size)
-        #    niblack_thresholds.append(np.median(niblack_map))
-        #    sauvola_thresholds.append(np.median(sauvola_map))
-        # self.niblack_eq_ = np.median(niblack_thresholds)
-        # self.sauvola_eq_ = np.median(sauvola_thresholds)
-
         # Compute global Otsu and Yen thresholds
         gray_pixels = X_gray.ravel()
         self.otsu_ = threshold_otsu(gray_pixels)
         self.yen_ = threshold_yen(gray_pixels)
-        # print(f"Otsu threshold = {self.otsu_}")
-        # print(f"Yen threshold = {self.yen_}")
-        # print(f"global-equivalent Niblack threshold = {self.niblack_eq_}")
-        # print(f"global-equivalent Sauvola threshold = {self.sauvola_eq_}")
+
+        print(f"Otsu threshold = {self.otsu_}")
+        print(f"Yen threshold  = {self.yen_}")
 
         if self.threshold_param == "otsu":
             self.threshold_ = self.otsu_
@@ -920,9 +979,9 @@ class ImagesBinarizer:
             X_bin = []
             for img in X_gray:
                 if self.threshold_ == "niblack":
-                    thresh_local = threshold_niblack(img, window_size=self.window_size)
+                    thresh_local = threshold_niblack(img)
                 elif self.threshold_ == "sauvola":
-                    thresh_local = threshold_sauvola(img, window_size=self.window_size)
+                    thresh_local = threshold_sauvola(img)
                 else:
                     raise ValueError(
                         f"Invalid local threshold method: {self.threshold_}"
@@ -949,6 +1008,7 @@ class ImagesBinarizer:
 
         return self.fit(X, y).transform(X)
 
+    '''
     def get_thresholds(self):
         """
         Return computed and parameter thresholds.
@@ -976,6 +1036,7 @@ class ImagesBinarizer:
             "yen": self.yen_,
             "param_value": self.threshold_param,
         }
+    '''
 
     def plot_threshold_analysis(self, X):
         """
@@ -1028,8 +1089,8 @@ class ImagesBinarizer:
         # niblack_thresholds = []
         # sauvola_thresholds = []
         # for img in tqdm(X_gray, desc = "Computing eq. thresholds"):
-        #    niblack_map = threshold_niblack(img, window_size=self.window_size)
-        #    sauvola_map = threshold_sauvola(img, window_size=self.window_size)
+        #    niblack_map = threshold_niblack(img)
+        #    sauvola_map = threshold_sauvola(img)
         #    niblack_thresholds.append(np.median(niblack_map))
         #    sauvola_thresholds.append(np.median(sauvola_map))
         # niblack_eq = np.median(niblack_thresholds)
@@ -1151,13 +1212,13 @@ class ImagesBinarizer:
         axs[1, 2].axis("off")
         axs[1, 2].set_title(f"Yen (from fit) = {self.threshold_:.3f}")
 
-        niblack_thresh = threshold_niblack(img_gray, window_size=self.window_size)
+        niblack_thresh = threshold_niblack(img_gray)
         niblack_img = img_gray > niblack_thresh
         axs[1, 3].imshow(niblack_img, cmap="gray", vmin=0, vmax=1)
         axs[1, 3].axis("off")
         axs[1, 3].set_title("Niblack")
 
-        sauvola_thresh = threshold_sauvola(img_gray, window_size=self.window_size)
+        sauvola_thresh = threshold_sauvola(img_gray)
         sauvola_img = img_gray > sauvola_thresh
         axs[1, 4].imshow(sauvola_img, cmap="gray", vmin=0, vmax=1)
         axs[1, 4].axis("off")
@@ -1477,75 +1538,75 @@ def print_CV_results(search_CV, duration: int | None = None):
 
 
 
-# %%
-def random_zoom_in(img, zoom_min=0.7, zoom_max=0.95, random_state=None):
-    """
-    Apply random centered zoom-in augmentation to the input image.
-
-    Parameters:
-        img (np.ndarray): Input RGB image as a NumPy array.
-        zoom_min (float): Minimum zoom factor (<1), controls max zoom-in intensity.
-        zoom_max (float): Maximum zoom factor (<=1).
-            If set to 1, there's a statistical risk the output image
-            might be identical or very close to the original.
-        random_state (int or np.random.Generator, optional): Seed or generator for reproducibility.
-
-    Returns:
-        np.ndarray: Augmented image of the same size as input.
-    """
-    rng = np.random.default_rng(random_state)
-
-    h, w = img.shape[:2]
-    zoom_factor = rng.uniform(zoom_min, zoom_max)
-    new_h, new_w = int(h * zoom_factor), int(w * zoom_factor)
-
-    y1 = (h - new_h) // 2
-    x1 = (w - new_w) // 2
-
-    crop = img[y1 : y1 + new_h, x1 : x1 + new_w]
-    zoomed = cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
-    return zoomed
-
-
-def augment_image(img, zoom_min=0.7, zoom_max=0.95, random_state=None):
-    """
-    Apply data augmentation to the image using only transformations
-    that preserve the original size and avoid introducing blank borders.
-
-    Operations applied:
-    - Random horizontal flip
-    - Random vertical flip
-    - Random centered zoom-in
-
-    Parameters:
-        img (np.ndarray): Input RGB image.
-        zoom_min (float): Minimum zoom factor for zoom-in (<1).
-        zoom_max (float): Maximum zoom factor (should be <1 to guarantee variation).
-        random_state (int or np.random.Generator, optional): Seed or generator for reproducibility.
-
-    Returns:
-        np.ndarray: Augmented image of the same size as input.
-    """
-    assert (
-        0 < zoom_min < zoom_max <= 1
-    ), "zoom_min and zoom_max must satisfy 0 < zoom_min < zoom_max <= 1"
-
-    rng = np.random.default_rng(random_state)
-
-    # Random horizontal flip
-    if rng.random() < 0.5:
-        img = cv2.flip(img, 1)
-
-    # Random vertical flip
-    if rng.random() < 0.5:
-        img = cv2.flip(img, 0)
-
-    # Random zoom-in
-    img = random_zoom_in(img, zoom_min, zoom_max, random_state=rng)
-
-    return img
-
-
+# %% [markdown]
+#  === Cellule désactivée car non utilisée ===
+#
+# def random_zoom_in(img, zoom_min=0.7, zoom_max=0.95, random_state=None):
+#     """
+#     Apply random centered zoom-in augmentation to the input image.
+#
+#     Parameters:
+#         img (np.ndarray): Input RGB image as a NumPy array.
+#         zoom_min (float): Minimum zoom factor (<1), controls max zoom-in intensity.
+#         zoom_max (float): Maximum zoom factor (<=1).
+#             If set to 1, there's a statistical risk the output image
+#             might be identical or very close to the original.
+#         random_state (int or np.random.Generator, optional): Seed or generator for reproducibility.
+#
+#     Returns:
+#         np.ndarray: Augmented image of the same size as input.
+#     """
+#     rng = np.random.default_rng(random_state)
+#
+#     h, w = img.shape[:2]
+#     zoom_factor = rng.uniform(zoom_min, zoom_max)
+#     new_h, new_w = int(h * zoom_factor), int(w * zoom_factor)
+#
+#     y1 = (h - new_h) // 2
+#     x1 = (w - new_w) // 2
+#
+#     crop = img[y1 : y1 + new_h, x1 : x1 + new_w]
+#     zoomed = cv2.resize(crop, (w, h), interpolation=cv2.INTER_LINEAR)
+#     return zoomed
+#
+#
+# def augment_image(img, zoom_min=0.7, zoom_max=0.95, random_state=None):
+#     """
+#     Apply data augmentation to the image using only transformations
+#     that preserve the original size and avoid introducing blank borders.
+#
+#     Operations applied:
+#     - Random horizontal flip
+#     - Random vertical flip
+#     - Random centered zoom-in
+#
+#     Parameters:
+#         img (np.ndarray): Input RGB image.
+#         zoom_min (float): Minimum zoom factor for zoom-in (<1).
+#         zoom_max (float): Maximum zoom factor (should be <1 to guarantee variation).
+#         random_state (int or np.random.Generator, optional): Seed or generator for reproducibility.
+#
+#     Returns:
+#         np.ndarray: Augmented image of the same size as input.
+#     """
+#     assert (
+#         0 < zoom_min < zoom_max <= 1
+#     ), "zoom_min and zoom_max must satisfy 0 < zoom_min < zoom_max <= 1"
+#
+#     rng = np.random.default_rng(random_state)
+#
+#     # Random horizontal flip
+#     if rng.random() < 0.5:
+#         img = cv2.flip(img, 1)
+#
+#     # Random vertical flip
+#     if rng.random() < 0.5:
+#         img = cv2.flip(img, 0)
+#
+#     # Random zoom-in
+#     img = random_zoom_in(img, zoom_min, zoom_max, random_state=rng)
+#
+#     return img
 
 # %% [markdown] id="TNT2w2VWsCPd"
 # # Data Visualisation
@@ -1633,6 +1694,7 @@ if LOAD_RAW and SAVE_RAW_SPLITTED:
         overwrite=False,
         verbose=True,
     )
+
 
 
 # %% [markdown]
@@ -2568,12 +2630,12 @@ if CALIB_RF:
 # ### XGBoost
 
 # %%
-if not CALIB_XGB:
+if CALIB_XGB:
     # charger
     path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
     best_xgb = joblib.load(path)
 
-    model = clone(best_xgb)
+    model = best_xgb  # ici on ne clone pas car clone fait bug + inutile car xgb est unfitted
 
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
 
@@ -2674,37 +2736,34 @@ if CALIB:
 # %% [markdown]
 # avec StratifiedKFold
 
-# %%
-"""
-
-# charger
-path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
-best_xgb = joblib.load(path)
-
-best_xgb.set_params(n_jobs=1)
-best_xgb.set_params(device="cuda")
-
-cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
-
-model = clone(best_xgb)  # best_xgb n'est pas fitted mais pour homogénéiser...
-print(model)
-
-calibrated_xgb_cv = CalibratedClassifierCV(
-    estimator=model,
-    method="sigmoid",  # ou sigmoid (plus rapide et plus robuste sur peu de données)
-    cv=cv,  # on pourrait utiliser cv=5 directement qui est stratifié mais sans shuffle...
-    n_jobs=n_jobs,
-)
-
-calibrated_xgb_cv.fit(X_res_train_valid_flat, y_res_train_valid_encoded)
-
-# sauvegarder
-path = os.path.join(
-    PATH_JOBLIB, "xgb_tuned_calibrated_sigmoid_cv_trainvalid_v1.joblib"
-)
-joblib.dump(calibrated_xgb_cv, path)
-"""
-
+# %% [markdown]
+# charger  
+# path = os.path.join(PATH_JOBLIB, "xgb_tuned_gridcv_trainvalid_unfit_v1.joblib")
+# best_xgb = joblib.load(path)
+#
+# best_xgb.set_params(n_jobs=1)
+# best_xgb.set_params(device="cuda")
+#
+# cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=random_state)
+#
+# model = clone(best_xgb)  # best_xgb n'est pas fitted mais pour homogénéiser...
+# print(model)
+#
+# calibrated_xgb_cv = CalibratedClassifierCV(
+#     estimator=model,
+#     method="sigmoid",  # ou sigmoid (plus rapide et plus robuste sur peu de données)
+#     cv=cv,  # on pourrait utiliser cv=5 directement qui est stratifié mais sans shuffle...
+#     n_jobs=n_jobs,
+# )
+#
+# calibrated_xgb_cv.fit(X_res_train_valid_flat, y_res_train_valid_encoded)
+#
+# sauvegarder  
+# path = os.path.join(
+#     PATH_JOBLIB, "xgb_tuned_calibrated_sigmoid_cv_trainvalid_v1.joblib"
+# )
+# joblib.dump(calibrated_xgb_cv, path)
+#
 
 
 # %% [markdown]
@@ -2893,16 +2952,6 @@ import numpy as np
 
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
-import tensorflow as tf
-from tensorflow.keras.applications.vgg16 import VGG16
-from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications.vgg16 import preprocess_input
-
-print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
 
 target_size = (224, 224)
 
@@ -2964,6 +3013,7 @@ def DidDataGen(
             n_class += 1
 
     return train_generator, valid_generator, test_generator, n_class
+
 
 
 # %% [markdown] id="n4KuJkGZ-fPR"
@@ -3045,9 +3095,9 @@ def DidVGG16(
         train_generator,
         epochs=nb_epochs,
         class_weight=class_weight_dict,
-        steps_per_epoch=train_generator.samples // batch_size,
+        # steps_per_epoch=train_generator.samples // batch_size, #Keras calcule tout seul le steps per epoch
         validation_data=valid_generator,
-        validation_steps=valid_generator.samples // batch_size,
+        # validation_steps=valid_generator.samples // batch_size,
         callbacks=callbacks,
     )
 
@@ -3066,8 +3116,8 @@ def DidVGG16(
 
     train_loss = history.history["loss"]
     val_loss = history.history["val_loss"]
-    train_acc = history.history["acc"]
-    val_acc = history.history["val_acc"]
+    train_acc = history.history["accuracy"]
+    val_acc = history.history["val_accuracy"]
 
     plt.figure(figsize=(20, 7))
 
@@ -3099,7 +3149,8 @@ def DidVGG16(
             "\nEvaluation du modèle sur l'ensemble de valid augmenté par génération de données:"
         )
         score = model.evaluate(test_generator)
-        print("score =", score)
+        print("loss    =", score[0])
+        print("accuracy=", score[1])
 
     else:
 
@@ -3124,6 +3175,7 @@ train_generator, valid_generator, test_generator, n_class = DidDataGen(
 )
 
 
+
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="ThfDJFTSEWlZ" outputId="0ae36e53-ab85-400c-b35a-ba5faa663bfe"
 model, history, score = DidVGG16(
     train_generator,
@@ -3144,6 +3196,7 @@ model, history, score = DidVGG16(
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(PATH_KERAS, f"model_lr_4_batch_64_{timestamp}")
 model.save(path + ".keras")
+
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="-RXalbGE-ymZ" outputId="be03837b-7194-4361-d8aa-9d0928bb3e91"

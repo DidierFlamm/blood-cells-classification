@@ -2996,13 +2996,13 @@ def DidDataGen(
     )
 
     # compte le nb de sous-dossiers dans directory_train
-    n_class = 0
-    for file in os.listdir(directory_train):
-        d = os.path.join(directory_train, file)
-        if os.path.isdir(d):
-            n_class += 1
+    # n_class = 0
+    # for file in os.listdir(directory_train):
+    #    d = os.path.join(directory_train, file)
+    #    if os.path.isdir(d):
+    #        n_class += 1
 
-    return train_generator, valid_generator, test_generator, n_class
+    return train_generator, valid_generator, test_generator
 
 
 
@@ -3019,7 +3019,6 @@ def fit_DL_model(
     train_generator,
     valid_generator,
     test_generator,
-    n_class,
     n_conv_layers_trainable=0,
     learning_rate=1e-4,
     nb_epochs=30,
@@ -3027,6 +3026,8 @@ def fit_DL_model(
 ) -> Tuple[Any, Any, Tuple]:
 
     start_time = time.perf_counter()
+
+    n_class = len(train_generator.class_indices)
 
     # Freeze toutes les couches du base_model
     for layer in base_model.layers:
@@ -3091,20 +3092,7 @@ def fit_DL_model(
         callbacks=callbacks,
     )
 
-    # Courbe de la fonction de coût et de précision en fonction de l'epoch
-
-    print(
-        "\nCourbes de perte et de précision pour VGG16 avec les paramètres:\n # couches convolutionnelles entraînées:",
-        n_conv_layers_trainable,
-        "/",
-        len(base_model.layers),
-        "\n # learning rate init",
-        learning_rate,
-        "\n # epochs            :",
-        nb_epochs,
-        "\n # batch size        :",
-        batch_size,
-    )
+    # Courbe de la fonction de loss et accuracy en fonction de l'epoch
 
     train_loss = history.history["loss"]
     val_loss = history.history["val_loss"]
@@ -3137,7 +3125,20 @@ def fit_DL_model(
 
     duration = int(time.perf_counter() - start_time)
 
-    print("\n✅ Modèle entraîné en", duration, "s")
+    print(
+        "\n✅ Modèle entraîné en",
+        duration,
+        "s  avec les paramètres:\n\t• couches convolutionnelles entraînées:",
+        n_conv_layers_trainable,
+        "/",
+        len(base_model.layers),
+        "\n\t• learning rate init",
+        learning_rate,
+        "\n\t• epochs            :",
+        nb_epochs,
+        "\n\t• batch size        :",
+        batch_size,
+    )
 
     # Evaluation du modèle
     print("\nEvaluation du modèle sur l'ensemble de test:")
@@ -3150,7 +3151,7 @@ def fit_DL_model(
 
 
 # %%
-train_generator, valid_generator, test_generator, n_class = DidDataGen(
+train_generator, valid_generator, test_generator = DidDataGen(
     PATH_TRAIN,
     PATH_VALID,
     PATH_TEST,
@@ -3163,6 +3164,29 @@ train_generator, valid_generator, test_generator, n_class = DidDataGen(
     vertical_flip=True,
 )
 
+
+
+# %%
+n_layers = 4
+batch_size = 128
+
+model, history, score = fit_DL_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_class,
+    n_conv_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    batch_size=batch_size,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="ThfDJFTSEWlZ" outputId="0ae36e53-ab85-400c-b35a-ba5faa663bfe"

@@ -32,8 +32,8 @@ import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Masque info(1), warning(2), error(3) de tensorflow
 
-
-from IPython.display import display, HTML
+from IPython.core.display import HTML
+from IPython.display import display
 import random
 from collections import defaultdict, Counter
 import inspect
@@ -72,6 +72,7 @@ from sklearn.metrics import (
     classification_report,
     log_loss,
 )
+from imblearn.metrics import classification_report_imbalanced
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.utils.class_weight import compute_class_weight, compute_sample_weight
 from sklearn.calibration import CalibratedClassifierCV
@@ -83,13 +84,15 @@ from lightgbm import LGBMClassifier
 
 # Deep Learning
 import tensorflow as tf
-from tensorflow.keras.applications.vgg16 import VGG16
+from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input as vgg16_preprocess_input
+from tensorflow.keras.applications.resnet_v2 import ResNet50V2, preprocess_input as rn_v2_preprocess_input
+from tensorflow.keras.applications.densenet import DenseNet121, preprocess_input as dn_preprocess_input
 from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.applications.vgg16 import preprocess_input
+
 
 print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
 
@@ -2924,17 +2927,19 @@ if FINAL_EVAL:
 
 
 # %% [markdown] id="q_VckjXO9EK6"
-# # IV. Deep Learning
+# # Deep Learning
 
 # %% [markdown] id="ACRHah0G9NnC"
-# ##1. VGG16
+# ## VGG16
 
 # %% [markdown] id="MDfktrkc9cin"
 # Génération d'images à partir d'un répertoire d'images d’entraînement et de valid
 
 
 # %%
-base_model = VGG16(weights="imagenet", include_top=False)
+base_model = VGG16(
+    weights="imagenet", include_top=False
+)  # par défaut input_shape = (224,224,3)
 
 n_layers = len(base_model.layers)
 conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
@@ -2951,6 +2956,7 @@ def DidDataGen(
     directory_train,
     directory_valid,
     directory_test,
+    preprocessing_function,
     target_size=(224, 224),
     batch_size=32,
     shear_range=0.2,
@@ -2961,7 +2967,7 @@ def DidDataGen(
 ):
 
     train_datagen = ImageDataGenerator(
-        preprocessing_function=preprocess_input,
+        preprocessing_function=preprocessing_function,
         shear_range=shear_range,  # plage d'étirement
         zoom_range=zoom_range,  # plage d'agrandissement
         rotation_range=rotation_range,  # plage de rotation en degré
@@ -2969,9 +2975,9 @@ def DidDataGen(
         vertical_flip=vertical_flip,  # retournement vertical aléatoire
     )
 
-    valid_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
+    valid_datagen = ImageDataGenerator(preprocessing_function=preprocessing_function)
 
-    test_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
+    test_datagen = ImageDataGenerator(preprocessing_function=preprocessing_function)
 
     train_generator = train_datagen.flow_from_directory(
         directory=directory_train,
@@ -3057,9 +3063,13 @@ def fit_DL_model(
     model.add(base_model)
     model.add(GlobalAveragePooling2D())
     model.add(Dense(1024, activation="relu"))
-    model.add(Dropout(rate=0.2))
+    model.add(
+        Dropout(rate=0.2)
+    )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
     model.add(Dense(512, activation="relu"))
-    model.add(Dropout(rate=0.2))
+    model.add(
+        Dropout(rate=0.2)
+    )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
     model.add(Dense(n_class, activation="softmax"))
 
     model.compile(
@@ -3152,6 +3162,7 @@ train_generator, valid_generator, test_generator = DidDataGen(
     PATH_TRAIN,
     PATH_VALID,
     PATH_TEST,
+    vgg16_preprocess_input,
     target_size=target_size,
     batch_size=batch_size,
     shear_range=0.2,
@@ -3177,7 +3188,7 @@ model, history, score = fit_DL_model(
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
 )
 model.save(path + ".keras")
 
@@ -3197,7 +3208,7 @@ model, history, score = fit_DL_model(
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
 )
 model.save(path + ".keras")
 
@@ -3217,7 +3228,7 @@ model, history, score = fit_DL_model(
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
 )
 model.save(path + ".keras")
 
@@ -3237,294 +3248,34 @@ model, history, score = fit_DL_model(
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
 )
 model.save(path + ".keras")
 
 
-# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="ThfDJFTSEWlZ" outputId="0ae36e53-ab85-400c-b35a-ba5faa663bfe"
-n_layers = 0
-batch_size = 64
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-
-# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="-RXalbGE-ymZ" outputId="be03837b-7194-4361-d8aa-9d0928bb3e91"
-n_layers = 4
-batch_size = 64
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-
-# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="uX1mpAVX_K7f" outputId="74f4ccaa-b945-4b39-b652-7f68a5bc6443"
+# %%
 n_layers = 8
-batch_size = 64
 
-model, history, score = DidVGG16(
+model, history, score = fit_DL_model(
+    base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_layers,
     learning_rate=1e-4,
     nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-
-# %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="RuTkn5dy_Kmn" outputId="bb8f472a-07f0-4a68-bbf1-738f1d4e5133"
-n_layers = 13
-batch_size = 64
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-
-# %% id="vE5RV3y-B5ut"
-n_layers = 0
-batch_size = 32
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-
-# %%
-n_layers = 2
-batch_size = 32
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 4
-batch_size = 32
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 6
-batch_size = 32
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 0
-batch_size = 16
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 2
-batch_size = 16
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 4
-batch_size = 16
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
-)
-model.save(path + ".keras")
-
-
-# %%
-n_layers = 6
-batch_size = 16
-
-model, history, score = DidVGG16(
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_class,
-    n_layers_trainable=n_layers,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=batch_size,
-    model_eval=True,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS, f"model_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
 )
 model.save(path + ".keras")
 
 
 # %% [markdown] id="K4efqyWkApK3"
-# Feature Extraction en sortie des couches 2 et 5 puis entraînement de différents modèles de classification (Arbre de décision, SVM, Random Forest et XGBoost)
+# ###  Feature Extraction  
+# en sortie des couches 2 et 5 puis entraînement de différents modèles de classification (Arbre de décision, SVM, Random Forest et XGBoost)
 
 
 # %% id="TAyQnvdTA5Q4"
@@ -3601,19 +3352,6 @@ def DidFeatureExtractionClassification(
 
 
 
-# %% id="GpAykBPJw4p4"
-# X,Y = DidPreprocessing(path_DS, img_width = 100, img_height = 100, drop_duplicates = True)
-# DidSave(X,'/content/drive/MyDrive/BD/variable_X')
-# DidSave(Y,'/content/drive/MyDrive/BD/variable_Y')
-
-
-
-# %% id="fCvihuOYDhPt"
-X = DidLoad("/content/drive/MyDrive/BD/variable_X")
-Y = DidLoad("/content/drive/MyDrive/BD/variable_Y")
-
-
-
 # %% colab={"base_uri": "https://localhost:8080/"} id="dUyE_qw4CeGT" outputId="acf5bdf5-6874-4999-a76d-440420ae16b0"
 for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
@@ -3639,16 +3377,6 @@ for i in [2, 5]:
 
 
 # %% colab={"base_uri": "https://localhost:8080/", "height": 1000} id="rRs_tg9XlYZB" outputId="753d163f-5f6e-4a96-f6fb-d2460e7298e8"
-model_12_32, _, _ = DidVGG16(
-    train_generator,
-    valid_generator,
-    n_class,
-    n_layers_trainable=12,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    batch_size=32,
-    model_eval=True,
-)
 DidSave(model_12_32, "/content/drive/MyDrive/BD/model_12_layers_32_batch")
 for i in [2, 5]:
     _, _ = DidFeatureExtractionClassification(
@@ -3702,140 +3430,79 @@ print("score de classification avec XGBoost           :", clf.score(X_test, Y_te
 
 
 # %% [markdown] id="tTBQgKq59Vxa"
-# ##2. ResNet50
+# ## ResNet50V2
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="uaRyLotf9i4Y" outputId="87a6d930-ab4f-4af3-8560-638d90411511"
-# création des datasets d’entraînement et de test à partir des fichiers jpg
+# %%
+base_model = ResNet50V2(
+    weights="imagenet", include_top=False
+)  # par défaut input_shape = (224,224,3)
 
-import tensorflow as tf
-import numpy as np
-
-import matplotlib.pyplot as plt
-import time
-
-# import cv2
-import seaborn as sns
-
-import pandas as pd
-from sklearn.model_selection import train_test_split
-
-from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-import tensorflow.keras as K
-
-from tensorflow.keras.applications.resnet50 import ResNet50
-from tensorflow.keras import callbacks
-
-from tensorflow.keras.applications.vgg16 import preprocess_input
-
-train_datagen = ImageDataGenerator(
-    preprocessing_function=preprocess_input,
-    shear_range=0.2,  # plage d'étirement
-    zoom_range=0.2,  # plage d'agrandissement
-    rotation_range=359,  # plage de rotation en degré
-    horizontal_flip=True,  # retournement horizontal aléatoire
-    vertical_flip=True,  # retournement vertical aléatoire
+n_layers = len(base_model.layers)
+conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
+n_conv_layers = len(conv_layers)
+print(
+    f"{base_model.name} has {n_layers} layers in total, including {n_conv_layers} convolutional layers."
 )
 
-test_datagen = ImageDataGenerator(preprocessing_function=preprocess_input)
+target_size = (224, 224)  # optimal pour ResNet
 
-train_generator = train_datagen.flow_from_directory(
-    directory=path_DS_train, class_mode="sparse", target_size=(100, 100), batch_size=32
-)
 
-test_generator = test_datagen.flow_from_directory(
-    directory=path_DS_test, class_mode="sparse", target_size=(100, 100), batch_size=32
+# %%
+batch_size = 32
+
+train_generator, valid_generator, test_generator = DidDataGen(
+    PATH_TRAIN,
+    PATH_VALID,
+    PATH_TEST,
+    rn_v2_preprocess_input,
+    target_size=target_size,
+    batch_size=batch_size,
+    shear_range=0.2,
+    zoom_range=0.2,
+    rotation_range=359,
+    horizontal_flip=True,
+    vertical_flip=True,
 )
 
 
+# %%
+n_layers = 0
 
-# %% id="Nx-kbOpizmAc"
-print("model2 : C2 143 - 224x224 - lr 1e-4")
-
-inputs = K.Input(shape=(224, 224, 3))
-
-n_class = 9
-
-resnet2 = K.applications.ResNet50(
-    weights="imagenet", include_top=False, input_tensor=inputs
-)
-
-for layer in resnet2.layers[:143]:
-    layer.trainable = False
-
-model2 = K.models.Sequential()
-model2.add(K.layers.Lambda(lambda x: tf.image.resize(x, (224, 224))))
-model2.add(resnet2)
-
-model2.add(Flatten())
-model2.add(Dense(512, activation="relu"))
-model2.add(Dense(10, activation="softmax"))
-
-ces = callbacks.EarlyStopping(
-    monitor="accuracy", patience=4, mode="max", restore_best_weights=True
-)
-crop = callbacks.ReduceLROnPlateau(
-    monitor="accuracy", patience=2, verbose=2, mode="max"
-)
-
-model2.compile(
-    loss="sparse_categorical_crossentropy",
-    optimizer=K.optimizers.legacy.RMSprop(1e-4),
-    metrics=["accuracy"],
-)
-
-history2 = model2.fit(
+model, history, score = fit_DL_model(
+    base_model,
     train_generator,
-    batch_size=32,
-    epochs=100,
-    verbose=1,
-    validation_data=test_generator,
-    shuffle=True,
-    callbacks=[ces, crop],
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
 )
 
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
 
 
-# %% id="N97N7rN0zl9D"
-train_loss = history2.history["loss"]
-val_loss = history2.history["val_loss"]
-train_acc = history2.history["accuracy"]
-val_acc = history2.history["val_accuracy"]
+# %%
+n_layers = 60
 
-plt.figure(figsize=(20, 8))
+model, history, score = fit_DL_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
 
-plt.subplot(121)
-plt.plot(train_loss)
-plt.plot(val_loss)
-plt.title("Model loss per epoch - Model2")
-plt.ylabel("loss")
-plt.xlabel("epoch")
-plt.legend(["train", "test"], loc="right")
-
-
-plt.subplot(122)
-plt.plot(train_acc)
-plt.plot(val_acc)
-plt.title("Model accuracy per epoch - Model2")
-plt.ylabel("acc")
-plt.xlabel("epoch")
-plt.legend(["train", "test"], loc="right")
-
-plt.show()
-
-
-
-# %% id="sm2J1Tq3zl55"
-model2.summary()
-
-
-
-# %% id="JAIXF_Szzl07"
-# permet de charger un modèle et de sortir son évaluation
-model2 = tf.keras.models.load_model("/content/drive/MyDrive/BD/vf_model2")
-model2.evaluate(test_generator)
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
 
 
 # %% id="76c9841xzltL"
@@ -3850,7 +3517,7 @@ def test_from_local(chemin, model, test_generator):
     img = image.load_img(chemin, target_size=(100, 100))
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
+    x = rn_v2_preprocess_input(x)
 
     # obtenir l'indice de la classe la plus probable
     arg = int(tf.argmax(model.predict(x), axis=1).numpy())
@@ -3888,7 +3555,7 @@ def test_from_url(image_url, model, test_generator):
     img = image.load_img(io.BytesIO(image_data), target_size=(100, 100))
     x = image.img_to_array(img)
     x = np.expand_dims(x, axis=0)
-    x = preprocess_input(x)
+    x = rn_v2_preprocess_input(x)
 
     arg = int(tf.argmax(model.predict(x), axis=1).numpy())
 
@@ -3910,33 +3577,60 @@ test_from_url(
 
 
 # %% [markdown] id="SNyQV1tT9jU9"
-# ##3. DenseNet121
+# ## DenseNet121
 
-# %% id="mqudUyMW9oxL"
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from tensorflow.keras.layers import Input, Dense
-from tensorflow.keras.models import Model
+# %%
+base_model = DenseNet121(
+    weights="imagenet", include_top=False
+)  # par défaut input_shape = (224,224,3)
 
-import tensorflow as tf
+n_layers = len(base_model.layers)
+conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
+n_conv_layers = len(conv_layers)
+print(
+    f"{base_model.name} has {n_layers} layers in total, including {n_conv_layers} convolutional layers."
+)
 
-
-
-# %% id="oV54ArNrRnvr"
-# Rechargement des données sauvegardées
-
-X_dnet121 = X_reload
-Y_dnet121 = Y_reload
+target_size = (224, 224)  # optimal pour DenseNet
 
 
+# %%
+batch_size = 32
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="dFOhXM7zRq3K" outputId="cf0743b5-b134-4315-a188-123ea01c7366"
-Y_dnet121
+train_generator, valid_generator, test_generator = DidDataGen(
+    PATH_TRAIN,
+    PATH_VALID,
+    PATH_TEST,
+    dn_preprocess_input,
+    target_size=target_size,
+    batch_size=batch_size,
+    shear_range=0.2,
+    zoom_range=0.2,
+    rotation_range=359,
+    horizontal_flip=True,
+    vertical_flip=True,
+)
 
 
+# %%
+n_layers = 0
 
-# %% colab={"base_uri": "https://localhost:8080/"} id="KBn--OTwfCK1" outputId="b261029f-d5c3-4c2c-d2e4-d4f272a00be6"
+model, history, score = fit_DL_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_layers,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+)
+model.save(path + ".keras")
+
 
 # %% id="qvJI0Vb9RsdA"
 # Fonction permettant de préparer les données pour être conforme à l'entrée du DenseNet121
@@ -3994,7 +3688,7 @@ X_dnet121_test, Y_dnet121_test = preprocess_data(
 
 
 # %% colab={"base_uri": "https://localhost:8080/"} id="I3hVf4nZSKqF" outputId="947dbfe9-a0e8-4127-fe1c-53edd5aa632a"
-# Implémentation du DenseNet121 et gel des 150 premières couches
+# Implémentation du DenseNet121
 
 base_densenet121 = tf.keras.applications.DenseNet121(
     include_top=False, weights="imagenet"
@@ -4303,9 +3997,6 @@ pickle.dump(model_densenet121_nf, pickle_out)
 pickle_out.close()
 
 
-
-# %% [markdown] id="jsiO64OSodCV"
-#
 
 # %% id="PZVf6Kx8TNN8"
 pickle_in = open("/content/drive/MyDrive/BD/model_densenet121_nf.pckl", "rb")

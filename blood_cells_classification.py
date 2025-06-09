@@ -1690,10 +1690,10 @@ def analyze_transfer_model(model_class):
     top_layers = model_with_top.layers[-n_top_layers:]
 
     # Default input size
-    target_size = model_with_top.input_shape[1:]
+    target_size = model_with_top.input_shape[1:3]
 
     print(f"{model_class.__name__}:")
-    print("\t• default input shape:", target_size)
+    print("\t• default input size:", target_size)
     print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
     print(f"\t• number of layers without top: {len(model_top_less.layers)}")
     print(f"\t• top layers ({len(top_layers)}):")
@@ -1752,7 +1752,7 @@ def analyze_transfer_model(model_class):
 
     display(displayImage(f"{model_class.__name__}_with_backbone_and_top.png"))
 
-    return model_top_less, target_size
+    return target_size
 
 
 
@@ -1812,6 +1812,7 @@ def get_data_generators(
 
 # %%
 def fit_transfer_model(
+    base_model,
     custom_model,
     train_generator,
     valid_generator,
@@ -1824,16 +1825,21 @@ def fit_transfer_model(
 
     start_time = time.perf_counter()
 
-    # n_class = len(train_generator.class_indices)
+    # Récupérer les noms des couches du backbone grâce à base_model
+    base_layer_names = [layer.name for layer in base_model.layers]
 
-    # Freeze toutes les couches du base_model
+    # 1er passage : Freeze toutes les couches du backbone et unfreeze les couches du top de custom_model
     for layer in custom_model.layers:
-        layer.trainable = False
+        layer.trainable = layer.name not in base_layer_names
 
-    # Unfreeze les couches convolutionnelles selon n_conv_layers_trainable
-    conv_layers = [layer for layer in custom_model.layers if "conv" in layer.name]
-    for layer in conv_layers[-n_conv_layers_trainable:]:
-        layer.trainable = True
+    # 2eme passage : Unfreeze les couches convolutionnelles selon n_conv_layers_trainable
+    if n_conv_layers_trainable > 0:
+        conv_layers_names = [
+            layer.name for layer in base_model.layers if "conv" in layer.name
+        ]
+        for layer in custom_model.layers:
+            if layer.name in conv_layers_names[-n_conv_layers_trainable:]:
+                layer.trainable = True
 
     # Callbacks
     early_stopping = EarlyStopping(
@@ -1849,19 +1855,23 @@ def fit_transfer_model(
     )
     callbacks = [reduce_learning_rate, early_stopping]
 
+    """
     # Construction du modèle
-    # model = Sequential()
-    # model.add(base_model)
-    # model.add(GlobalAveragePooling2D())
-    # model.add(Dense(1024, activation="relu"))
-    # model.add(
-    #    Dropout(rate=0.2)
-    # )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
-    # model.add(Dense(512, activation="relu"))
-    # model.add(
-    #    Dropout(rate=0.2)
-    # )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
-    # model.add(Dense(n_class, activation="softmax"))
+    model = Sequential()
+    model.add(base_model)
+    model.add(GlobalAveragePooling2D())
+    model.add(Dense(1024, activation="relu"))
+    model.add(
+        Dropout(rate=0.2)
+    )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
+    model.add(Dense(512, activation="relu"))
+    model.add(
+        Dropout(rate=0.2)
+    )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
+    model.add(Dense(n_class, activation="softmax"))
+    # custom_model = model
+    """
+    # print(custom_model.summary())
 
     custom_model.compile(
         optimizer=Adam(learning_rate=learning_rate),
@@ -1931,7 +1941,7 @@ def fit_transfer_model(
         f"\t• batch size des flows des image generators : {train_generator.batch_size}"
     )
     print(
-        f"\t• nb couches convolutionnelles entraînées   : {n_conv_layers_trainable} / {len(base_model.layers)}"
+        f"\t• nb couches convolutionnelles entraînées   : {n_conv_layers_trainable} / {len(custom_model.layers)}"
     )
     print(f"\t• learning rate : {learning_rate}")
     print(f"\t• epochs        : {nb_epochs}")
@@ -3273,7 +3283,8 @@ if FINAL_EVAL:
 #
 
 # %%
-model_top_less, target_size = analyze_transfer_model(VGG16)
+transfer_model_class = VGG16
+target_size = analyze_transfer_model(transfer_model_class)
 
 
 # %% [markdown] vscode={"languageId": "raw"}
@@ -3299,21 +3310,37 @@ train_generator, valid_generator, test_generator = get_data_generators(
 
 n_class = len(train_generator.class_indices)
 
+print(n_class, target_size)
+
 
 # %% [markdown]
 # ### Création du modèle pour transfer Learning
 
 # %%
-x = model_top_less.output
+base_model = transfer_model_class(
+    weights="imagenet", include_top=False, input_shape=(*target_size, 3)
+)
+"""
+x = base_model.output
 x = GlobalAveragePooling2D(name="avg_pool")(x)
 x = Dense(256, activation="relu", name="dense")(x)
 x = Dropout(0.5, name="dropout")(x)
 output = Dense(n_class, activation="softmax", name="predictions")(x)
+"""
+
+x = base_model.output
+x = GlobalAveragePooling2D(name="avg_pool")(x)
+x = Dense(1024, activation="relu", name="dense_1")(x)
+x = Dropout(0.2, name="dropout_1")(x)
+x = Dense(512, activation="relu", name="dense_2")(x)
+x = Dropout(0.2, name="dropout_2")(x)
+output = Dense(n_class, activation="softmax", name="predictions")(x)
+
 
 custom_model = Model(
-    inputs=model_top_less.input,
+    inputs=base_model.input,
     outputs=output,
-    name="{model_top_less.__class__.__name__}_custom_top",
+    name=f"{transfer_model_class.__name__}_custom_top",
 )
 
 display(custom_model.summary())
@@ -3323,19 +3350,22 @@ display(custom_model.summary())
 # ### Entraînement et évaluation sur test
 
 # %%
-n_conv_layers_trainable = 8
+n_conv_layers_trainable = 4
 
 model, history, score = fit_transfer_model(
+    base_model,
     custom_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
+    n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
 path = os.path.join(
     PATH_KERAS,
     f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",

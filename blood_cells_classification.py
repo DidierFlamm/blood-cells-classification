@@ -86,15 +86,6 @@ cm = pd.crosstab(y_res_test, y_res_pred)
 # ## Import des librairies
 
 # %%
-from tensorflow.keras.applications.resnet_v2 import ResNet50V2
-from tensorflow.keras.utils import plot_model
-
-model = ResNet50V2(weights="imagenet", include_top=True)
-plot_model(model, to_file="model.png", show_layer_names=True)
-display(displayImage(f"model.png"))
-
-
-# %%
 from typing import Tuple, List, Dict, Optional, Union, TypeVar, Any
 import time
 from datetime import datetime
@@ -157,7 +148,7 @@ import tensorflow as tf
 from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input as vgg16_preprocess_input
 from tensorflow.keras.applications.resnet_v2 import ResNet50V2, preprocess_input as rn_v2_preprocess_input
 from tensorflow.keras.applications.densenet import DenseNet121, preprocess_input as dn_preprocess_input
-from tensorflow.keras.layers import Dense, Dropout, Flatten, GlobalAveragePooling2D
+from tensorflow.keras.layers import Input, Dense, Dropout, GlobalAveragePooling2D, Layer
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
@@ -1685,6 +1676,276 @@ def print_CV_results(search_CV, duration: int | None = None):
 #
 #     return img
 
+# %%
+def analyze_transfer_model(model_class):
+
+    # Charger modèles avec et sans top
+    model_with_top = model_class(weights="imagenet", include_top=True)
+    model_top_less = model_class(weights="imagenet", include_top=False)
+
+    # Nombre de couches réellement ajoutées par le "top"
+    n_top_layers = len(model_with_top.layers) - len(model_top_less.layers)
+
+    # Liste des couches du top
+    top_layers = model_with_top.layers[-n_top_layers:]
+
+    # Default input size
+    target_size = model_with_top.input_shape[1:]
+
+    print(f"{model_class.__name__}:")
+    print("\t• default input shape:", target_size)
+    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
+    print(f"\t• number of layers without top: {len(model_top_less.layers)}")
+    print(f"\t• top layers ({len(top_layers)}):")
+    for name in top_layers:
+        print("\t\t-", name)
+
+    # Définir la couche custom "VirtualBackbone"
+    class Backbone(Layer):
+        def __init__(self, backbone_model, **kwargs):
+            super().__init__(**kwargs)
+            self.backbone = backbone_model
+
+        def call(self, inputs):
+            return self.backbone(inputs)
+
+        def compute_output_shape(self, input_shape):
+            return self.backbone.compute_output_shape(
+                input_shape
+            )  # 2. Nom de la dernière couche du backbone
+
+    backbone_last_layer_name = model_top_less.layers[-1].name
+
+    # 3. Créer un nouvel Input
+    input_shape = model_with_top.input_shape[1:]  # (224, 224, 3)
+    input_ = Input(shape=input_shape, name="Images batch")
+
+    # 4. Passer l'input dans le backbone
+    backbone = Backbone(model_top_less, name=f"{model_class.__name__}")
+    x = backbone(input_)
+
+    # 5. Appliquer toutes les couches **après** block5_pool
+    apply_top = False
+    for layer in model_with_top.layers:
+        if apply_top:
+            # Cloner la couche dynamiquement
+            LayerClass = layer.__class__
+            config = layer.get_config()
+            new_layer = LayerClass.from_config(config)
+            x = new_layer(x)
+        if layer.name == backbone_last_layer_name:
+            apply_top = True  # On commence à construire après
+
+    # 6. Construire le modèle final
+    model = Model(
+        inputs=input_, outputs=x, name=f"{model_class.__name__} with backbone and top"
+    )
+
+    display(model.summary())
+    # Visualiser
+    plot_model(
+        model,
+        to_file=f"{model_class.__name__}_with_backbone_and_top.png",
+        show_layer_names=True,
+        show_shapes=True,
+    )
+
+    display(displayImage(f"{model_class.__name__}_with_backbone_and_top.png"))
+
+    return model_top_less, target_size
+
+
+
+# %%
+def get_data_generators(
+    directory_train,
+    directory_valid,
+    directory_test,
+    preprocessing_function,
+    target_size=(224, 224),
+    batch_size=32,
+    shear_range=0.2,
+    zoom_range=0.2,
+    rotation_range=359,
+    horizontal_flip=True,
+    vertical_flip=True,
+):
+
+    train_datagen = ImageDataGenerator(
+        preprocessing_function=preprocessing_function,
+        shear_range=shear_range,  # plage d'étirement
+        zoom_range=zoom_range,  # plage d'agrandissement
+        rotation_range=rotation_range,  # plage de rotation en degré
+        horizontal_flip=horizontal_flip,  # retournement horizontal aléatoire
+        vertical_flip=vertical_flip,  # retournement vertical aléatoire
+    )
+
+    valid_datagen = ImageDataGenerator(preprocessing_function=preprocessing_function)
+
+    test_datagen = ImageDataGenerator(preprocessing_function=preprocessing_function)
+
+    train_generator = train_datagen.flow_from_directory(
+        directory=directory_train,
+        class_mode="sparse",
+        target_size=target_size,
+        batch_size=batch_size,
+    )
+
+    valid_generator = valid_datagen.flow_from_directory(
+        directory=directory_valid,
+        class_mode="sparse",
+        target_size=target_size,
+        batch_size=batch_size,
+    )
+
+    test_generator = test_datagen.flow_from_directory(
+        directory=directory_test,  # chemin vers ton dossier test
+        class_mode="sparse",  # ou "categorical" selon ton modèle / labels
+        target_size=target_size,  # la même taille que pour train/valid
+        batch_size=batch_size,
+        shuffle=False,  # important: ne pas mélanger les données test
+    )
+
+    return train_generator, valid_generator, test_generator
+
+
+
+# %%
+def fit_transfer_model(
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=0,
+    learning_rate=1e-4,
+    nb_epochs=30,
+    # batch_size=32,
+) -> Tuple[Any, Any, Tuple]:
+
+    start_time = time.perf_counter()
+
+    # n_class = len(train_generator.class_indices)
+
+    # Freeze toutes les couches du base_model
+    for layer in custom_model.layers:
+        layer.trainable = False
+
+    # Unfreeze les couches convolutionnelles selon n_conv_layers_trainable
+    conv_layers = [layer for layer in custom_model.layers if "conv" in layer.name]
+    for layer in conv_layers[-n_conv_layers_trainable:]:
+        layer.trainable = True
+
+    # Callbacks
+    early_stopping = EarlyStopping(
+        monitor="val_loss", min_delta=0.01, mode="min", patience=6, verbose=1
+    )
+    reduce_learning_rate = ReduceLROnPlateau(
+        monitor="val_loss",
+        factor=0.1,
+        patience=3,
+        min_delta=0.01,
+        # pas de cooldown nécessaire (patience = 3 suffit à assurer la durée des plateaux de lr donc la stabilité de l’entraînement)
+        verbose=1,
+    )
+    callbacks = [reduce_learning_rate, early_stopping]
+
+    # Construction du modèle
+    # model = Sequential()
+    # model.add(base_model)
+    # model.add(GlobalAveragePooling2D())
+    # model.add(Dense(1024, activation="relu"))
+    # model.add(
+    #    Dropout(rate=0.2)
+    # )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
+    # model.add(Dense(512, activation="relu"))
+    # model.add(
+    #    Dropout(rate=0.2)
+    # )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
+    # model.add(Dense(n_class, activation="softmax"))
+
+    custom_model.compile(
+        optimizer=Adam(learning_rate=learning_rate),
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+
+    # Entraînement du modèle avec pondération des classes déséquilibrées
+
+    # labels des images dans le générateur
+    labels = train_generator.classes
+    # classes uniques
+    classes = np.unique(labels)
+    # calcul des poids
+    class_weights = compute_class_weight(
+        class_weight="balanced", classes=classes, y=labels
+    )
+    # dictionnaire attendu par model.fit()
+    class_weight_dict = dict(zip(classes, class_weights))
+
+    print("Entraînement du modèle")
+    history = custom_model.fit(
+        train_generator,
+        epochs=nb_epochs,
+        class_weight=class_weight_dict,
+        # steps_per_epoch=train_generator.samples // batch_size, #Keras calcule tout seul le steps per epoch ?
+        validation_data=valid_generator,
+        # validation_steps=valid_generator.samples // batch_size,
+        callbacks=callbacks,
+    )
+
+    # Courbe de la fonction de loss et accuracy en fonction de l'epoch
+
+    train_loss = history.history["loss"]
+    val_loss = history.history["val_loss"]
+    train_acc = history.history["accuracy"]
+    val_acc = history.history["val_accuracy"]
+
+    plt.figure(figsize=(20, 7))
+
+    plt.subplot(121)
+    plt.plot(train_loss)
+    plt.plot(val_loss)
+    plt.title("Model loss per epoch")
+    plt.ylabel("loss")
+    plt.xlabel("epoch")
+    plt.legend(["train", "valid"], loc="right")
+    plt.grid(True)
+
+    plt.subplot(122)
+    plt.plot(train_acc)
+    plt.plot(val_acc)
+    plt.title("Model accuracy per epoch")
+    plt.ylabel("acc")
+    plt.xlabel("epoch")
+    plt.legend(["train", "valid"], loc="right")
+    plt.grid(True)
+
+    plt.show()
+
+    print("\n", custom_model.summary())
+
+    duration = int(time.perf_counter() - start_time)
+
+    print(f"\n✅ Modèle entraîné en {duration} s, avec les paramètres initiaux:")
+    print(
+        f"\t• batch size des flows des image generators : {train_generator.batch_size}"
+    )
+    print(
+        f"\t• nb couches convolutionnelles entraînées   : {n_conv_layers_trainable} / {len(base_model.layers)}"
+    )
+    print(f"\t• learning rate : {learning_rate}")
+    print(f"\t• epochs        : {nb_epochs}")
+
+    # Evaluation du modèle
+    print("\nEvaluation du modèle sur l'ensemble de test:")
+    score = custom_model.evaluate(test_generator)
+    print("loss     =", score[0])
+    print("accuracy =", score[1])
+
+    return custom_model, history, score
+
+
+
 # %% [markdown] id="TNT2w2VWsCPd"
 # # Data Visualisation
 
@@ -3007,475 +3268,22 @@ if FINAL_EVAL:
 # %% [markdown] id="ACRHah0G9NnC"
 # ## VGG16
 
-# %% [markdown] id="MDfktrkc9cin"
-# Génération d'images à partir d'un répertoire d'images d’entraînement et de valid
-
-
-# %%
-import tensorflow as tf
-from tensorflow.keras.applications.vgg16 import (
-    VGG16,
-    preprocess_input as vgg16_preprocess_input,
-)
-from tensorflow.keras.applications.resnet_v2 import (
-    ResNet50V2,
-    preprocess_input as rn_v2_preprocess_input,
-)
-from tensorflow.keras.applications.densenet import (
-    DenseNet121,
-    preprocess_input as dn_preprocess_input,
-)
-from tensorflow.keras.layers import Layer, InputLayer
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.utils import plot_model
-from IPython.display import display, Image as displayImage
-
-
-def get_transfer_model(model):
-    # Charger modèles avec et sans top
-    model_with_top = model(weights="imagenet", include_top=True)
-    model_without_top = model(weights="imagenet", include_top=False)
-
-    # Nombre de couches réellement ajoutées par le "top"
-    n_top_layers = len(model_with_top.layers) - len(model_without_top.layers)
-
-    # Liste des couches du top
-    top_layers = model_with_top.layers[-n_top_layers:]
-
-    # Default input size
-    target_size = model_with_top.input_shape[1:3]
-
-    print(f"\nModel {model.__name__}:")
-    print("\t• default input shape:", target_size)
-    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
-    print(f"\t• number of layers without top: {len(model_without_top.layers)}")
-    print(f"\t• top layers ({len(top_layers)}):")
-    for name in top_layers:
-        print("\t\t-", name)
-
-    # Définir la couche custom "VirtualBackbone"
-    class Backbone(Layer):
-        def __init__(self, backbone_model, **kwargs):
-            super().__init__(**kwargs)
-            self.backbone = backbone_model
-
-        def call(self, inputs):
-            return self.backbone(inputs)
-
-        def compute_output_shape(self, input_shape):
-            return self.backbone.compute_output_shape(input_shape)
-
-    # Créer Sequential avec VirtualBackbone en première couche
-    top_model = Sequential(name=f"{model.__name__}_top_sequential")
-
-    # Ajouter couche virtuelle
-    top_model.add(Backbone(model_without_top, name=f"{model.__name__}_backbone"))
-
-    # Ajouter les couches du top
-    for layer in top_layers:
-        top_model.add(layer)
-
-    # Construction explicite
-    top_model.build(input_shape=model_with_top.input_shape)
-
-    # Visualiser
-    plot_model(
-        top_model,
-        to_file=f"{model.__name__}_sequential_top.png",
-        show_layer_names=True,
-        show_shapes=True,
-    )
-
-    display(top_model.summary())
-    display(displayImage(f"{model.__name__}_sequential_top.png"))
-
-    return top_model, target_size
-
-
-# Exemple d’utilisation
-full_model, target_size = get_transfer_model(VGG16)
-full_model, target_size = get_transfer_model(ResNet50V2)
-full_model, target_size = get_transfer_model(DenseNet121)
-
-
-# %%
-from tensorflow.keras.layers import Layer, Input
-from tensorflow.keras.models import Model, Sequential
-from tensorflow.keras.utils import plot_model
-from IPython.display import display, Image as displayImage
-
-
-def get_transfer_model(model):
-    # Charger modèles avec et sans top
-    model_with_top = model(weights="imagenet", include_top=True)
-    model_without_top = model(weights="imagenet", include_top=False)
-
-    # Nombre de couches réellement ajoutées par le "top"
-    n_top_layers = len(model_with_top.layers) - len(model_without_top.layers)
-
-    # Liste des vraies couches du top
-    top_layers = model_with_top.layers[-n_top_layers:]
-
-    # default input size
-    target_size = model_with_top.input_shape[1:3]
-
-    print(f"\nModel {model.__name__}:")
-    print("\t• default input shape:", target_size)
-    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
-    print(f"\t• number of layers without top: {len(model_without_top.layers)}")
-
-    # ---- couche virtuelle "backbone" ----
-    class VirtualBackbone(Layer):
-        def __init__(self, backbone_model, **kwargs):
-            super().__init__(**kwargs)
-            self.backbone = backbone_model
-
-        def call(self, inputs):
-            return self.backbone(inputs)
-
-    # Input
-    input_tensor = Input(shape=model_with_top.input_shape[1:], name="input")
-
-    # Virtual Backbone layer
-    backbone_output = VirtualBackbone(model_without_top, name="virtual_backbone")(
-        input_tensor
-    )
-
-    # Reconstituer top en séquentiel (en appliquant les couches sur backbone_output)
-    x = backbone_output
-    for layer in top_layers:
-        x = layer(x)
-
-    # Modèle complet
-    full_model = Model(
-        inputs=input_tensor, outputs=x, name=f"{model.__name__}_with_virtual_backbone"
-    )
-
-    # Visualiser le modèle complet
-    plot_model(
-        full_model,
-        to_file=f"{model.__name__}_full_model.png",
-        show_layer_names=True,
-        show_shapes=True,
-    )
-    display(displayImage(f"{model.__name__}_full_model.png"))
-
-    return full_model, target_size
-
-
-# Exemple d'utilisation
-full_model, target_size = get_transfer_model(VGG16)
-
-
-# %%
-def get_transfer_model(model):
-
-    # Charger modèles avec et sans top
-    model_with_top = model(weights="imagenet", include_top=True)
-    model_without_top = model(weights="imagenet", include_top=False)
-
-    # Nombre de couches réellement ajoutées par le "top"
-    n_top_layers = len(model_with_top.layers) - len(model_without_top.layers)
-
-    # Liste des vraies couches du top
-    top_layers = model_with_top.layers[-n_top_layers:]
-
-    # default input size
-    target_size = model_with_top.input_shape[1:3]
-
-    print(f"\nModel {model.__name__}:")
-    print("\t• default input shape:", target_size)
-    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
-    print(f"\t• number of layers without top: {len(model_without_top.layers)}")
-    # print(f"\t• top layers ({n_top_layers}):")
-    # for layer in top_layers:
-    #    print("\t\t", layer)
-
-    # Rebuild the top as a standalone model
-    top_model = Sequential(name=f"{model.__name__}_top")
-    for layer in top_layers:
-        top_model.add(layer)
-    top_model.build(input_shape=model_without_top.output_shape)
-
-    plot_model(
-        top_model,
-        to_file=f"{model.__name__}_top.png",
-        show_layer_names=True,
-        show_shapes=True,
-    )
-
-    display(displayImage(f"{model.__name__}_top.png"))
-
-    return model_without_top, target_size
-
-
-get_transfer_model(VGG16)
-
-
-# %%
-base_model = ResNet50V2(
-    weights="imagenet", include_top=True
-)  # par défaut input_shape = (224,224,3)
-
-names = [layer.name for layer in base_model.layers]
-
-for idx, name in enumerate(names):
-    # print(idx, name)
-    pass
-
-n_layers = len(base_model.layers)
-
-conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
-n_conv_layers = len(conv_layers)
-
-conv_stages = []
-for name in names:
-    parts = name.split("_")
-    # Cherche "conv" dans le nom (quel que soit l'ordre)
-    if any("conv" in part for part in parts):
-        conv_stages.append(parts[0])
-# Unique + ordre conservé
-conv_stages = list(dict.fromkeys(conv_stages))
-
-n_conv_stages = len(conv_stages)
-
-conv_layers_in_conv_stages = [
-    layer
-    for layer in conv_layers
-    if any(layer.name.startswith(stage_name) for stage_name in conv_stages)
-]
-n_conv_layers_in_conv_stages = len(conv_layers_in_conv_stages)
-
-print(f"{base_model.name} has {n_layers} layers in total")
-print(f"including {n_conv_layers} convolutional layers")
-print(
-    f"{n_conv_layers_in_conv_stages} of the convolutional layers belong to {n_conv_stages} stages:",
-    conv_stages,
-)
-print(
-    "random examples:",
-    [random.choice(conv_layers_in_conv_stages).name for _ in range(3)],
-)
-
-display(base_model.summary())
-
-plot_model(base_model, to_file=f"{base_model.name}.png", show_layer_names=True)
-display(displayImage(f"{base_model.name}.png"))
-
-target_size = (224, 224)  # optimal pour VGG16
-
-
-# %% [raw]
+# %% [markdown]
+# ### Analyze du modèle
 #
 
-# %% id="i9E_PKsK9P3n"
-def DidDataGen(
-    directory_train,
-    directory_valid,
-    directory_test,
-    preprocessing_function,
-    target_size=(224, 224),
-    batch_size=32,
-    shear_range=0.2,
-    zoom_range=0.2,
-    rotation_range=359,
-    horizontal_flip=True,
-    vertical_flip=True,
-):
-
-    train_datagen = ImageDataGenerator(
-        preprocessing_function=preprocessing_function,
-        shear_range=shear_range,  # plage d'étirement
-        zoom_range=zoom_range,  # plage d'agrandissement
-        rotation_range=rotation_range,  # plage de rotation en degré
-        horizontal_flip=horizontal_flip,  # retournement horizontal aléatoire
-        vertical_flip=vertical_flip,  # retournement vertical aléatoire
-    )
-
-    valid_datagen = ImageDataGenerator(preprocessing_function=preprocessing_function)
-
-    test_datagen = ImageDataGenerator(preprocessing_function=preprocessing_function)
-
-    train_generator = train_datagen.flow_from_directory(
-        directory=directory_train,
-        class_mode="sparse",
-        target_size=target_size,
-        batch_size=batch_size,
-    )
-
-    valid_generator = valid_datagen.flow_from_directory(
-        directory=directory_valid,
-        class_mode="sparse",
-        target_size=target_size,
-        batch_size=batch_size,
-    )
-
-    test_generator = test_datagen.flow_from_directory(
-        directory=directory_test,  # chemin vers ton dossier test
-        class_mode="sparse",  # ou "categorical" selon ton modèle / labels
-        target_size=target_size,  # la même taille que pour train/valid
-        batch_size=batch_size,
-        shuffle=False,  # important: ne pas mélanger les données test
-    )
-
-    # compte le nb de sous-dossiers dans directory_train
-    # n_class = 0
-    # for file in os.listdir(directory_train):
-    #    d = os.path.join(directory_train, file)
-    #    if os.path.isdir(d):
-    #        n_class += 1
-
-    return train_generator, valid_generator, test_generator
+# %%
+model_top_less, target_size = analyze_transfer_model(VGG16)
 
 
-
-# %% [markdown] id="n4KuJkGZ-fPR"
-# Création et entraînement de plusieurs modèles VGG16 (à 21 couches) selon différents paramètres :
-#  * nb de couches defreezées = 4, 12, 21
-#  * taille du batch = 32 ou 64
-#  * learning rate évolutif par plateau de val_loss (callback)
-
-
-# %% id="Ao4qMxTl-kaG"
-def fit_transfer_model(
-    base_model,
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_conv_layers_trainable=0,
-    learning_rate=1e-4,
-    nb_epochs=30,
-    # batch_size=32,
-) -> Tuple[Any, Any, Tuple]:
-
-    start_time = time.perf_counter()
-
-    n_class = len(train_generator.class_indices)
-
-    # Freeze toutes les couches du base_model
-    for layer in base_model.layers:
-        layer.trainable = False
-
-    # Unfreeze les couches convolutionnelles selon n_conv_layers_trainable
-    conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
-    for layer in conv_layers[-n_conv_layers_trainable:]:
-        layer.trainable = True
-
-    # Callbacks
-    early_stopping = EarlyStopping(
-        monitor="val_loss", min_delta=0.01, mode="min", patience=6, verbose=1
-    )
-    reduce_learning_rate = ReduceLROnPlateau(
-        monitor="val_loss",
-        factor=0.1,
-        patience=3,
-        min_delta=0.01,
-        # pas de cooldown nécessaire (patience = 3 suffit à assurer la durée des plateaux de lr donc la stabilité de l’entraînement)
-        verbose=1,
-    )
-    callbacks = [reduce_learning_rate, early_stopping]
-
-    # Construction du modèle
-    model = Sequential()
-    model.add(base_model)
-    model.add(GlobalAveragePooling2D())
-    model.add(Dense(1024, activation="relu"))
-    model.add(
-        Dropout(rate=0.2)
-    )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
-    model.add(Dense(512, activation="relu"))
-    model.add(
-        Dropout(rate=0.2)
-    )  # ChatPGT recommande 0.3 pour éviter overfitting sur 15k images
-    model.add(Dense(n_class, activation="softmax"))
-
-    model.compile(
-        optimizer=Adam(learning_rate=learning_rate),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-
-    # Entraînement du modèle avec pondération des classes déséquilibrées
-
-    # labels des images dans le générateur
-    labels = train_generator.classes
-    # classes uniques
-    classes = np.unique(labels)
-    # calcul des poids
-    class_weights = compute_class_weight(
-        class_weight="balanced", classes=classes, y=labels
-    )
-    # dictionnaire attendu par model.fit()
-    class_weight_dict = dict(zip(classes, class_weights))
-
-    print("Entraînement du modèle")
-    history = model.fit(
-        train_generator,
-        epochs=nb_epochs,
-        class_weight=class_weight_dict,
-        # steps_per_epoch=train_generator.samples // batch_size, #Keras calcule tout seul le steps per epoch ?
-        validation_data=valid_generator,
-        # validation_steps=valid_generator.samples // batch_size,
-        callbacks=callbacks,
-    )
-
-    # Courbe de la fonction de loss et accuracy en fonction de l'epoch
-
-    train_loss = history.history["loss"]
-    val_loss = history.history["val_loss"]
-    train_acc = history.history["accuracy"]
-    val_acc = history.history["val_accuracy"]
-
-    plt.figure(figsize=(20, 7))
-
-    plt.subplot(121)
-    plt.plot(train_loss)
-    plt.plot(val_loss)
-    plt.title("Model loss per epoch")
-    plt.ylabel("loss")
-    plt.xlabel("epoch")
-    plt.legend(["train", "valid"], loc="right")
-    plt.grid(True)
-
-    plt.subplot(122)
-    plt.plot(train_acc)
-    plt.plot(val_acc)
-    plt.title("Model accuracy per epoch")
-    plt.ylabel("acc")
-    plt.xlabel("epoch")
-    plt.legend(["train", "valid"], loc="right")
-    plt.grid(True)
-
-    plt.show()
-
-    print("\n", model.summary())
-
-    duration = int(time.perf_counter() - start_time)
-
-    print(f"\n✅ Modèle entraîné en {duration} s, avec les paramètres initiaux:")
-    print(
-        f"\t• batch size des flows des image generators : {train_generator.batch_size}"
-    )
-    print(
-        f"\t• nb couches convolutionnelles entraînées   : {n_conv_layers_trainable} / {len(base_model.layers)}"
-    )
-    print(f"\t• learning rate : {learning_rate}")
-    print(f"\t• epochs        : {nb_epochs}")
-
-    # Evaluation du modèle
-    print("\nEvaluation du modèle sur l'ensemble de test:")
-    score = model.evaluate(test_generator)
-    print("loss     =", score[0])
-    print("accuracy =", score[1])
-
-    return model, history, score
-
-
+# %% [markdown] vscode={"languageId": "raw"}
+# ### Génération d'images à partir d'un répertoire d'images d’entraînement et de valid
+# TODO : faire la même chose avec flow au lieu de flow_from_directory pour améliorer la performance (RAM au lieu de DD)
 
 # %%
 batch_size = 32
 
-train_generator, valid_generator, test_generator = DidDataGen(
+train_generator, valid_generator, test_generator = get_data_generators(
     PATH_TRAIN,
     PATH_VALID,
     PATH_TEST,
@@ -3488,6 +3296,51 @@ train_generator, valid_generator, test_generator = DidDataGen(
     horizontal_flip=True,
     vertical_flip=True,
 )
+
+n_class = len(train_generator.class_indices)
+
+
+# %% [markdown]
+# ### Création du modèle pour transfer Learning
+
+# %%
+x = model_top_less.output
+x = GlobalAveragePooling2D(name="avg_pool")(x)
+x = Dense(256, activation="relu", name="dense")(x)
+x = Dropout(0.5, name="dropout")(x)
+output = Dense(n_class, activation="softmax", name="predictions")(x)
+
+custom_model = Model(
+    inputs=model_top_less.input,
+    outputs=output,
+    name="{model_top_less.__class__.__name__}_custom_top",
+)
+
+display(custom_model.summary())
+
+
+# %% [markdown]
+# ### Entraînement et évaluation sur test
+
+# %%
+n_conv_layers_trainable = 8
+
+model, history, score = fit_transfer_model(
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS,
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
 
 
 # %%

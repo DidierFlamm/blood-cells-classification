@@ -86,6 +86,15 @@ cm = pd.crosstab(y_res_test, y_res_pred)
 # ## Import des librairies
 
 # %%
+from tensorflow.keras.applications.resnet_v2 import ResNet50V2
+from tensorflow.keras.utils import plot_model
+
+model = ResNet50V2(weights="imagenet", include_top=True)
+plot_model(model, to_file="model.png", show_layer_names=True)
+display(displayImage(f"model.png"))
+
+
+# %%
 from typing import Tuple, List, Dict, Optional, Union, TypeVar, Any
 import time
 from datetime import datetime
@@ -93,7 +102,7 @@ import os
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # Masque info(1), warning(2), error(3) de tensorflow
 
-from IPython.core.display import HTML
+from IPython.core.display import HTML, Image as displayImage
 from IPython.display import display
 import random
 from collections import defaultdict, Counter
@@ -153,6 +162,8 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.utils import plot_model
+
 
 
 print("Num GPUs Available: ", len(tf.config.list_physical_devices("GPU")))
@@ -3001,19 +3012,261 @@ if FINAL_EVAL:
 
 
 # %%
-base_model = VGG16(
-    weights="imagenet", include_top=False
+import tensorflow as tf
+from tensorflow.keras.applications.vgg16 import (
+    VGG16,
+    preprocess_input as vgg16_preprocess_input,
+)
+from tensorflow.keras.applications.resnet_v2 import (
+    ResNet50V2,
+    preprocess_input as rn_v2_preprocess_input,
+)
+from tensorflow.keras.applications.densenet import (
+    DenseNet121,
+    preprocess_input as dn_preprocess_input,
+)
+from tensorflow.keras.layers import Layer, InputLayer
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.utils import plot_model
+from IPython.display import display, Image as displayImage
+
+
+def get_transfer_model(model):
+    # Charger modèles avec et sans top
+    model_with_top = model(weights="imagenet", include_top=True)
+    model_without_top = model(weights="imagenet", include_top=False)
+
+    # Nombre de couches réellement ajoutées par le "top"
+    n_top_layers = len(model_with_top.layers) - len(model_without_top.layers)
+
+    # Liste des couches du top
+    top_layers = model_with_top.layers[-n_top_layers:]
+
+    # Default input size
+    target_size = model_with_top.input_shape[1:3]
+
+    print(f"\nModel {model.__name__}:")
+    print("\t• default input shape:", target_size)
+    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
+    print(f"\t• number of layers without top: {len(model_without_top.layers)}")
+    print(f"\t• top layers ({len(top_layers)}):")
+    for name in top_layers:
+        print("\t\t-", name)
+
+    # Définir la couche custom "VirtualBackbone"
+    class Backbone(Layer):
+        def __init__(self, backbone_model, **kwargs):
+            super().__init__(**kwargs)
+            self.backbone = backbone_model
+
+        def call(self, inputs):
+            return self.backbone(inputs)
+
+        def compute_output_shape(self, input_shape):
+            return self.backbone.compute_output_shape(input_shape)
+
+    # Créer Sequential avec VirtualBackbone en première couche
+    top_model = Sequential(name=f"{model.__name__}_top_sequential")
+
+    # Ajouter couche virtuelle
+    top_model.add(Backbone(model_without_top, name=f"{model.__name__}_backbone"))
+
+    # Ajouter les couches du top
+    for layer in top_layers:
+        top_model.add(layer)
+
+    # Construction explicite
+    top_model.build(input_shape=model_with_top.input_shape)
+
+    # Visualiser
+    plot_model(
+        top_model,
+        to_file=f"{model.__name__}_sequential_top.png",
+        show_layer_names=True,
+        show_shapes=True,
+    )
+
+    display(top_model.summary())
+    display(displayImage(f"{model.__name__}_sequential_top.png"))
+
+    return top_model, target_size
+
+
+# Exemple d’utilisation
+full_model, target_size = get_transfer_model(VGG16)
+full_model, target_size = get_transfer_model(ResNet50V2)
+full_model, target_size = get_transfer_model(DenseNet121)
+
+
+# %%
+from tensorflow.keras.layers import Layer, Input
+from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.utils import plot_model
+from IPython.display import display, Image as displayImage
+
+
+def get_transfer_model(model):
+    # Charger modèles avec et sans top
+    model_with_top = model(weights="imagenet", include_top=True)
+    model_without_top = model(weights="imagenet", include_top=False)
+
+    # Nombre de couches réellement ajoutées par le "top"
+    n_top_layers = len(model_with_top.layers) - len(model_without_top.layers)
+
+    # Liste des vraies couches du top
+    top_layers = model_with_top.layers[-n_top_layers:]
+
+    # default input size
+    target_size = model_with_top.input_shape[1:3]
+
+    print(f"\nModel {model.__name__}:")
+    print("\t• default input shape:", target_size)
+    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
+    print(f"\t• number of layers without top: {len(model_without_top.layers)}")
+
+    # ---- couche virtuelle "backbone" ----
+    class VirtualBackbone(Layer):
+        def __init__(self, backbone_model, **kwargs):
+            super().__init__(**kwargs)
+            self.backbone = backbone_model
+
+        def call(self, inputs):
+            return self.backbone(inputs)
+
+    # Input
+    input_tensor = Input(shape=model_with_top.input_shape[1:], name="input")
+
+    # Virtual Backbone layer
+    backbone_output = VirtualBackbone(model_without_top, name="virtual_backbone")(
+        input_tensor
+    )
+
+    # Reconstituer top en séquentiel (en appliquant les couches sur backbone_output)
+    x = backbone_output
+    for layer in top_layers:
+        x = layer(x)
+
+    # Modèle complet
+    full_model = Model(
+        inputs=input_tensor, outputs=x, name=f"{model.__name__}_with_virtual_backbone"
+    )
+
+    # Visualiser le modèle complet
+    plot_model(
+        full_model,
+        to_file=f"{model.__name__}_full_model.png",
+        show_layer_names=True,
+        show_shapes=True,
+    )
+    display(displayImage(f"{model.__name__}_full_model.png"))
+
+    return full_model, target_size
+
+
+# Exemple d'utilisation
+full_model, target_size = get_transfer_model(VGG16)
+
+
+# %%
+def get_transfer_model(model):
+
+    # Charger modèles avec et sans top
+    model_with_top = model(weights="imagenet", include_top=True)
+    model_without_top = model(weights="imagenet", include_top=False)
+
+    # Nombre de couches réellement ajoutées par le "top"
+    n_top_layers = len(model_with_top.layers) - len(model_without_top.layers)
+
+    # Liste des vraies couches du top
+    top_layers = model_with_top.layers[-n_top_layers:]
+
+    # default input size
+    target_size = model_with_top.input_shape[1:3]
+
+    print(f"\nModel {model.__name__}:")
+    print("\t• default input shape:", target_size)
+    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
+    print(f"\t• number of layers without top: {len(model_without_top.layers)}")
+    # print(f"\t• top layers ({n_top_layers}):")
+    # for layer in top_layers:
+    #    print("\t\t", layer)
+
+    # Rebuild the top as a standalone model
+    top_model = Sequential(name=f"{model.__name__}_top")
+    for layer in top_layers:
+        top_model.add(layer)
+    top_model.build(input_shape=model_without_top.output_shape)
+
+    plot_model(
+        top_model,
+        to_file=f"{model.__name__}_top.png",
+        show_layer_names=True,
+        show_shapes=True,
+    )
+
+    display(displayImage(f"{model.__name__}_top.png"))
+
+    return model_without_top, target_size
+
+
+get_transfer_model(VGG16)
+
+
+# %%
+base_model = ResNet50V2(
+    weights="imagenet", include_top=True
 )  # par défaut input_shape = (224,224,3)
 
+names = [layer.name for layer in base_model.layers]
+
+for idx, name in enumerate(names):
+    # print(idx, name)
+    pass
+
 n_layers = len(base_model.layers)
+
 conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
 n_conv_layers = len(conv_layers)
+
+conv_stages = []
+for name in names:
+    parts = name.split("_")
+    # Cherche "conv" dans le nom (quel que soit l'ordre)
+    if any("conv" in part for part in parts):
+        conv_stages.append(parts[0])
+# Unique + ordre conservé
+conv_stages = list(dict.fromkeys(conv_stages))
+
+n_conv_stages = len(conv_stages)
+
+conv_layers_in_conv_stages = [
+    layer
+    for layer in conv_layers
+    if any(layer.name.startswith(stage_name) for stage_name in conv_stages)
+]
+n_conv_layers_in_conv_stages = len(conv_layers_in_conv_stages)
+
+print(f"{base_model.name} has {n_layers} layers in total")
+print(f"including {n_conv_layers} convolutional layers")
 print(
-    f"{base_model.name} has {n_layers} layers in total, including {n_conv_layers} convolutional layers."
+    f"{n_conv_layers_in_conv_stages} of the convolutional layers belong to {n_conv_stages} stages:",
+    conv_stages,
 )
+print(
+    "random examples:",
+    [random.choice(conv_layers_in_conv_stages).name for _ in range(3)],
+)
+
+display(base_model.summary())
+
+plot_model(base_model, to_file=f"{base_model.name}.png", show_layer_names=True)
+display(displayImage(f"{base_model.name}.png"))
 
 target_size = (224, 224)  # optimal pour VGG16
 
+
+# %% [raw]
+#
 
 # %% id="i9E_PKsK9P3n"
 def DidDataGen(
@@ -3527,12 +3780,53 @@ base_model = ResNet50V2(
     weights="imagenet", include_top=False
 )  # par défaut input_shape = (224,224,3)
 
+names = [layer.name for layer in base_model.layers]
+
+
+for idx, name in enumerate(names):
+    # print(idx, name)
+    pass
+
 n_layers = len(base_model.layers)
+
 conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
 n_conv_layers = len(conv_layers)
+
+conv_stages = []
+for name in names:
+    parts = name.split("_")
+    # Cherche "conv" dans le nom (quel que soit l'ordre)
+    if any("conv" in part for part in parts):
+        conv_stages.append(parts[0])
+# Unique + ordre conservé
+conv_stages = list(dict.fromkeys(conv_stages))
+
+n_conv_stages = len(conv_stages)
+
+conv_layers_in_conv_stages = [
+    layer
+    for layer in conv_layers
+    if any(layer.name.startswith(stage_name) for stage_name in conv_stages)
+]
+n_conv_layers_in_conv_stages = len(conv_layers_in_conv_stages)
+
+print(f"{base_model.name} has {n_layers} layers in total")
+print(f"including {n_conv_layers} convolutional layers")
 print(
-    f"{base_model.name} has {n_layers} layers in total, including {n_conv_layers} convolutional layers."
+    f"{n_conv_layers_in_conv_stages} of the convolutional layers belong to {n_conv_stages} stages:",
+    conv_stages,
 )
+print(
+    "random examples:",
+    [random.choice(conv_layers_in_conv_stages).name for _ in range(3)],
+)
+
+display(base_model.summary())
+
+plot_model(base_model, to_file=f"{base_model.name}.png", show_layer_names=True)
+display(displayImage(f"{base_model.name}.png"))
+
+print("\n", model.summary())
 
 target_size = (224, 224)  # optimal pour ResNet
 
@@ -3679,9 +3973,26 @@ base_model = DenseNet121(
 n_layers = len(base_model.layers)
 conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
 n_conv_layers = len(conv_layers)
-print(
-    f"{base_model.name} has {n_layers} layers in total, including {n_conv_layers} convolutional layers."
-)
+blocks = []
+for idx, layer in enumerate(conv_layers):
+    blocks.append(layer.name.split("_"))
+    print(layer.name)
+blocks = np.unique(blocks)
+n_blocks = len(blocks)
+
+
+print(f"{base_model.name} has {n_layers} layers in total")
+print(f"including {n_conv_layers} convolutional layers,")
+print(f"belonging to {n_blocks} blocks:")
+print(blocks)
+
+example = [
+    layer
+    for layer in base_model.layers
+    if "conv" in layer.name and "block" in layer.name
+][0]
+
+print("format:", example)
 
 target_size = (224, 224)  # optimal pour DenseNet
 

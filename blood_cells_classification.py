@@ -18,6 +18,67 @@
 #
 # L’objectif est de classifier des images microscopiques de différents types de cellules sanguines à l’aide d'algorithmes de Computer Vision.
 
+# %%
+# TODO : fonction pour afficher les résultats après éval finale (ML et DL)
+
+# loss (balancé par class_weight ou sample weight)
+# accuracy
+# bal_accuracy
+# confusion matrix et normalized cm (version display pandas et matplotlib)
+# classification_report (version display du format dict)
+# classification_report_imbalanced (voir si ça apporte qqch sinon virer imblearn)
+
+# sauvegarde des 4 csv
+
+"""
+cm = pd.crosstab(y_res_test, y_res_pred)
+    # Matrice de confusion normalisée
+    cm_norm = cm.div(cm.sum(axis=1), axis=0)
+    dict_report = classification_report(y_res_test, y_res_pred, output_dict=True)
+    dict_report["balanced_accuracy"] = balanced_accuracy  # type: ignore
+    dict_report["log_loss"] = loss  # type: ignore
+    df_report = pd.DataFrame(dict_report).T
+
+    if verbose:
+        print("loss:", loss)
+        print("accuracy:", accuracy)
+        print("balanced accuracy:", balanced_accuracy)
+        display(cm)
+        display(df_report.round(3))
+
+    # Sauvegarder csv
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+
+    path = os.path.join(PATH_JOBLIB, f"rf_confusion_matrix_{timestamp}.csv")
+    cm.to_csv(path)
+
+    cm_norm.to_csv(
+        os.path.join(PATH_JOBLIB, f"rf_confusion_matrix_normalized_{timestamp}.csv")
+    )
+
+    path = os.path.join(PATH_JOBLIB, f"rf_classification_report_{timestamp}.csv")
+    df_report.to_csv(path)
+
+    # Visualisation confusion matrix
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Greens")
+    plt.title("Confusion Matrix")
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
+    plt.tight_layout()
+    plt.show()
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm_norm, annot=True, fmt=".2f", cmap="Blues")
+    plt.ylabel("True label")
+    plt.xlabel("Predicted label")
+    plt.title("Normalized Confusion Matrix")
+    plt.show()
+
+"""
+
+
 # %% [markdown]
 # # Préambule
 
@@ -2928,6 +2989,9 @@ if FINAL_EVAL:
 
 # %% [markdown] id="q_VckjXO9EK6"
 # # Deep Learning
+#
+# #TODO: tuning par KerasTuner : faire varier le taux de dropout apres dense 1 et dense 2 
+# (et le nb de couches defrozen)
 
 # %% [markdown] id="ACRHah0G9NnC"
 # ## VGG16
@@ -3020,7 +3084,7 @@ def DidDataGen(
 
 
 # %% id="Ao4qMxTl-kaG"
-def fit_DL_model(
+def fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
@@ -3053,7 +3117,7 @@ def fit_DL_model(
         factor=0.1,
         patience=3,
         min_delta=0.01,
-        cooldown=0,  # pas de cooldown nécessaire (patience = 3 suffit à assurer la durée des plateaux de lr donc la stabilité de l’entraînement)
+        # pas de cooldown nécessaire (patience = 3 suffit à assurer la durée des plateaux de lr donc la stabilité de l’entraînement)
         verbose=1,
     )
     callbacks = [reduce_learning_rate, early_stopping]
@@ -3174,101 +3238,127 @@ train_generator, valid_generator, test_generator = DidDataGen(
 
 
 # %%
-n_layers = 0
+n_conv_layers_trainable = 0
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
 
 # %%
-n_layers = 2
+n_conv_layers_trainable = 2
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
 
 # %%
-n_layers = 4
+n_conv_layers_trainable = 4
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
 
 # %%
-n_layers = 6
+n_conv_layers_trainable = 6
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
 
 # %%
-n_layers = 8
+n_conv_layers_trainable = 8
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 10
+
+model, history, score = fit_transfer_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_conv_layers_trainable,
+    learning_rate=1e-3,  # LR baissé car bcp de couches à entraîner dès le début
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
@@ -3466,41 +3556,43 @@ train_generator, valid_generator, test_generator = DidDataGen(
 
 
 # %%
-n_layers = 0
+n_conv_layers_trainable = 0
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
 
 # %%
-n_layers = 60
+n_conv_layers_trainable = 60
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
@@ -3613,21 +3705,43 @@ train_generator, valid_generator, test_generator = DidDataGen(
 
 
 # %%
-n_layers = 0
+n_conv_layers_trainable = 0
 
-model, history, score = fit_DL_model(
+model, history, score = fit_transfer_model(
     base_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_layers,
+    n_conv_layers_trainable=n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 path = os.path.join(
-    PATH_KERAS, f"{base_model.name}_layers_{n_layers}_batch_{batch_size}_{timestamp}"
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 130
+
+model, history, score = fit_transfer_model(
+    base_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable=n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 

@@ -99,9 +99,11 @@ import random
 from collections import defaultdict, Counter
 import inspect
 from pathlib import Path
+import re
 import matplotlib.pyplot as plt
 
 # %matplotlib inline
+
 import seaborn as sns
 import squarify
 import itertools
@@ -148,9 +150,9 @@ import tensorflow as tf
 from tensorflow.keras.applications.vgg16 import VGG16, preprocess_input as vgg16_preprocess_input
 from tensorflow.keras.applications.resnet_v2 import ResNet50V2, preprocess_input as rn_v2_preprocess_input
 from tensorflow.keras.applications.densenet import DenseNet121, preprocess_input as dn_preprocess_input
-from tensorflow.keras.layers import Input, Dense, Dropout, GlobalAveragePooling2D, Layer
+from tensorflow.keras.layers import Input, Dense, Dropout, GlobalAveragePooling2D, Layer, BatchNormalization
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.models import Model, Sequential
+from tensorflow.keras.models import Model
 from tensorflow.keras.callbacks import ReduceLROnPlateau, EarlyStopping
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from tensorflow.keras.utils import plot_model
@@ -1677,14 +1679,15 @@ def print_CV_results(search_CV, duration: int | None = None):
 #     return img
 
 # %%
-def analyze_transfer_model(model_class):
+def analyze_transfer_model(model_class, display_summary=True, display_model=True):
 
     # Charger modèles avec et sans top
     model_with_top = model_class(weights="imagenet", include_top=True)
     model_top_less = model_class(weights="imagenet", include_top=False)
 
     # Nombre de couches réellement ajoutées par le "top"
-    n_top_layers = len(model_with_top.layers) - len(model_top_less.layers)
+    n_backbone_layers = len(model_top_less.layers)
+    n_top_layers = len(model_with_top.layers) - n_backbone_layers
 
     # Liste des couches du top
     top_layers = model_with_top.layers[-n_top_layers:]
@@ -1692,13 +1695,57 @@ def analyze_transfer_model(model_class):
     # Default input size
     target_size = model_with_top.input_shape[1:3]
 
-    print(f"{model_class.__name__}:")
-    print("\t• default input size:", target_size)
-    print(f"\t• number of layers with top   : {len(model_with_top.layers)}")
-    print(f"\t• number of layers without top: {len(model_top_less.layers)}")
-    print(f"\t• top layers ({len(top_layers)}):")
+    # Liste des couches convolutionnelles
+    conv_layers = [
+        layer for layer in model_top_less.layers if "Conv" in layer.__class__.__name__
+    ]
+    n_conv_layers = len(conv_layers)
+
+    # Liste des stages convolutionnels
+    conv_stages = []
+    for layer in conv_layers:
+        stage = layer.name.split("_")[0]
+        conv_stages.append(stage)
+    # Unique + ordre conservé
+    conv_stages = list(dict.fromkeys(conv_stages))
+
+    n_conv_stages = len(conv_stages)
+
+    # conv_layers_in_conv_stages = [
+    #    layer
+    #    for layer in conv_layers
+    #    if any(layer.name.startswith(stage_name) for stage_name in conv_stages)
+    # ]
+    # n_conv_layers_in_conv_stages = len(conv_layers_in_conv_stages)
+
+    # nombre de conv layers par stage
+    conv_per_stage = defaultdict(int)
+
+    for layer in conv_layers:
+        for stage in conv_stages:
+            if re.match(
+                f"^{stage}(_|\\b)", layer.name
+            ):  # correspond aux débuts comme "block1_", "conv2_"
+                conv_per_stage[stage] += 1
+                break  # une seule correspondance suffit
+
+    print(f"=== {model_class.__name__} ===\n")
+    print("default input size:", target_size)
+    print(f"number of layers in total: {len(model_with_top.layers)}")
+    print("\n• Backbone •")
+    print(
+        f"{n_backbone_layers} layers including {n_conv_layers} convolutional layers belonging to {n_conv_stages} convolutional stages:",
+    )
+    for stage in conv_stages:
+        print(f"\t- {stage}: {conv_per_stage[stage]} conv layers")
+    print(
+        "random examples:",
+        [random.choice(conv_layers).name for _ in range(5)],
+    )
+    print("\n• Top •")
+    print(f"{n_top_layers} layers")
     for name in top_layers:
-        print("\t\t-", name)
+        print("\t-", name)
 
     # Définir la couche custom "VirtualBackbone"
     class Backbone(Layer):
@@ -1718,7 +1765,7 @@ def analyze_transfer_model(model_class):
 
     # 3. Créer un nouvel Input
     input_shape = model_with_top.input_shape[1:]  # (224, 224, 3)
-    input_ = Input(shape=input_shape, name="Images batch")
+    input_ = Input(shape=input_shape, name="batch")
 
     # 4. Passer l'input dans le backbone
     backbone = Backbone(model_top_less, name=f"{model_class.__name__}")
@@ -1741,16 +1788,19 @@ def analyze_transfer_model(model_class):
         inputs=input_, outputs=x, name=f"{model_class.__name__} with backbone and top"
     )
 
-    display(model.summary())
-    # Visualiser
-    plot_model(
-        model,
-        to_file=f"{model_class.__name__}_with_backbone_and_top.png",
-        show_layer_names=True,
-        show_shapes=True,
-    )
+    if display_summary:
+        display(model.summary())
 
-    display(displayImage(f"{model_class.__name__}_with_backbone_and_top.png"))
+    # Visualiser
+    if display_model:
+        plot_model(
+            model,
+            to_file=f"{model_class.__name__}_with_backbone_and_top.png",
+            show_layer_names=True,
+            show_shapes=True,
+        )
+
+        display(displayImage(f"{model_class.__name__}_with_backbone_and_top.png"))
 
     return target_size
 
@@ -1764,18 +1814,22 @@ def get_data_generators(
     preprocessing_function,
     target_size=(224, 224),
     batch_size=32,
-    shear_range=0.2,
-    zoom_range=0.2,
-    rotation_range=359,
+    shear_range=0.15,
+    zoom_range=0.1,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    rotation_range=180,
     horizontal_flip=True,
     vertical_flip=True,
 ):
 
     train_datagen = ImageDataGenerator(
         preprocessing_function=preprocessing_function,
-        shear_range=shear_range,  # plage d'étirement
-        zoom_range=zoom_range,  # plage d'agrandissement
-        rotation_range=rotation_range,  # plage de rotation en degré
+        shear_range=shear_range,  # plage de cisaillement (en radian, ne pas dépasser 0.2 rad soit 11.5°)
+        zoom_range=zoom_range,  # plage d'agrandissement (dans + ou - le zoom range)
+        rotation_range=rotation_range,  # plage de rotation en degré (dans + ou - le rotation range)
+        width_shift_range=width_shift_range,  # décalage horizontal (en %)
+        height_shift_range=height_shift_range,  # décalage vertical (en %)
         horizontal_flip=horizontal_flip,  # retournement horizontal aléatoire
         vertical_flip=vertical_flip,  # retournement vertical aléatoire
     )
@@ -1932,7 +1986,7 @@ def fit_transfer_model(
 
     plt.show()
 
-    print("\n", custom_model.summary())
+    # print("\n", custom_model.summary())
 
     duration = int(time.perf_counter() - start_time)
 
@@ -3284,7 +3338,9 @@ if FINAL_EVAL:
 
 # %%
 transfer_model_class = VGG16
-target_size = analyze_transfer_model(transfer_model_class)
+target_size = analyze_transfer_model(
+    transfer_model_class, display_summary=True, display_model=False
+)
 
 
 # %% [markdown] vscode={"languageId": "raw"}
@@ -3301,9 +3357,11 @@ train_generator, valid_generator, test_generator = get_data_generators(
     vgg16_preprocess_input,
     target_size=target_size,
     batch_size=batch_size,
-    shear_range=0.2,
-    zoom_range=0.2,
-    rotation_range=359,
+    shear_range=0.2,  # ou 0.15
+    zoom_range=0.2,  # ou 0.1
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    rotation_range=180,
     horizontal_flip=True,
     vertical_flip=True,
 )
@@ -3320,14 +3378,6 @@ print(n_class, target_size)
 base_model = transfer_model_class(
     weights="imagenet", include_top=False, input_shape=(*target_size, 3)
 )
-"""
-x = base_model.output
-x = GlobalAveragePooling2D(name="avg_pool")(x)
-x = Dense(256, activation="relu", name="dense")(x)
-x = Dropout(0.5, name="dropout")(x)
-output = Dense(n_class, activation="softmax", name="predictions")(x)
-"""
-
 x = base_model.output
 x = GlobalAveragePooling2D(name="avg_pool")(x)
 x = Dense(1024, activation="relu", name="dense_1")(x)
@@ -3340,17 +3390,30 @@ output = Dense(n_class, activation="softmax", name="predictions")(x)
 custom_model = Model(
     inputs=base_model.input,
     outputs=output,
-    name=f"{transfer_model_class.__name__}_custom_top",
+    name=f"{transfer_model_class.__name__}_custom",
 )
 
-display(custom_model.summary())
+
+# %%
+x = base_model.output
+x = GlobalAveragePooling2D(name="avg_pool")(x)
+x = Dense(512, activation="relu", name="dense_1")(x)
+x = BatchNormalization()(x)
+x = Dropout(0.3)(x)
+output = Dense(n_class, activation="softmax", name="predictions")(x)
+
+custom_model_chagpt = Model(
+    inputs=base_model.input,
+    outputs=output,
+    name=f"{transfer_model_class.__name__}_chatgpt",
+)
 
 
 # %% [markdown]
 # ### Entraînement et évaluation sur test
 
 # %%
-n_conv_layers_trainable = 4
+n_conv_layers_trainable = 0
 
 model, history, score = fit_transfer_model(
     base_model,
@@ -3374,64 +3437,25 @@ model.save(path + ".keras")
 
 
 # %%
-n_conv_layers_trainable = 0
+n_conv_layers_trainable = 3
 
 model, history, score = fit_transfer_model(
     base_model,
+    custom_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
+    n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
 path = os.path.join(
     PATH_KERAS,
-    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
-)
-model.save(path + ".keras")
-
-
-# %%
-n_conv_layers_trainable = 2
-
-model, history, score = fit_transfer_model(
-    base_model,
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
-    learning_rate=1e-4,
-    nb_epochs=30,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS,
-    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
-)
-model.save(path + ".keras")
-
-
-# %%
-n_conv_layers_trainable = 4
-
-model, history, score = fit_transfer_model(
-    base_model,
-    train_generator,
-    valid_generator,
-    test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
-    learning_rate=1e-4,
-    nb_epochs=30,
-)
-
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-path = os.path.join(
-    PATH_KERAS,
-    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
@@ -3441,60 +3465,93 @@ n_conv_layers_trainable = 6
 
 model, history, score = fit_transfer_model(
     base_model,
+    custom_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
+    n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
 path = os.path.join(
     PATH_KERAS,
-    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
 
 # %%
-n_conv_layers_trainable = 8
+n_conv_layers_trainable = 9
 
 model, history, score = fit_transfer_model(
     base_model,
+    custom_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
+    n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
 path = os.path.join(
     PATH_KERAS,
-    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
 
 # %%
-n_conv_layers_trainable = 10
+n_conv_layers_trainable = 11
 
 model, history, score = fit_transfer_model(
     base_model,
+    custom_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
-    learning_rate=1e-3,  # LR baissé car bcp de couches à entraîner dès le début
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
     nb_epochs=30,
 )
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
 path = os.path.join(
     PATH_KERAS,
-    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 13
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
+path = os.path.join(
+    PATH_KERAS,
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
 )
 model.save(path + ".keras")
 
@@ -3659,76 +3716,57 @@ print("score de classification avec XGBoost           :", clf.score(X_test, Y_te
 # ## ResNet50V2
 
 # %%
-base_model = ResNet50V2(
-    weights="imagenet", include_top=False
-)  # par défaut input_shape = (224,224,3)
-
-names = [layer.name for layer in base_model.layers]
-
-
-for idx, name in enumerate(names):
-    # print(idx, name)
-    pass
-
-n_layers = len(base_model.layers)
-
-conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
-n_conv_layers = len(conv_layers)
-
-conv_stages = []
-for name in names:
-    parts = name.split("_")
-    # Cherche "conv" dans le nom (quel que soit l'ordre)
-    if any("conv" in part for part in parts):
-        conv_stages.append(parts[0])
-# Unique + ordre conservé
-conv_stages = list(dict.fromkeys(conv_stages))
-
-n_conv_stages = len(conv_stages)
-
-conv_layers_in_conv_stages = [
-    layer
-    for layer in conv_layers
-    if any(layer.name.startswith(stage_name) for stage_name in conv_stages)
-]
-n_conv_layers_in_conv_stages = len(conv_layers_in_conv_stages)
-
-print(f"{base_model.name} has {n_layers} layers in total")
-print(f"including {n_conv_layers} convolutional layers")
-print(
-    f"{n_conv_layers_in_conv_stages} of the convolutional layers belong to {n_conv_stages} stages:",
-    conv_stages,
+transfer_model_class = ResNet50V2
+target_size = analyze_transfer_model(
+    transfer_model_class, display_summary=True, display_model=True
 )
-print(
-    "random examples:",
-    [random.choice(conv_layers_in_conv_stages).name for _ in range(3)],
-)
-
-display(base_model.summary())
-
-plot_model(base_model, to_file=f"{base_model.name}.png", show_layer_names=True)
-display(displayImage(f"{base_model.name}.png"))
-
-print("\n", model.summary())
-
-target_size = (224, 224)  # optimal pour ResNet
 
 
 # %%
 batch_size = 32
 
-train_generator, valid_generator, test_generator = DidDataGen(
+train_generator, valid_generator, test_generator = get_data_generators(
     PATH_TRAIN,
     PATH_VALID,
     PATH_TEST,
     rn_v2_preprocess_input,
     target_size=target_size,
     batch_size=batch_size,
-    shear_range=0.2,
-    zoom_range=0.2,
-    rotation_range=359,
+    shear_range=0.15,
+    zoom_range=0.1,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    rotation_range=180,
     horizontal_flip=True,
     vertical_flip=True,
+)
+
+n_class = len(train_generator.class_indices)
+
+
+# %%
+base_model = transfer_model_class(
+    weights="imagenet", include_top=False, input_shape=(*target_size, 3)
+)
+
+x = base_model.output
+x = GlobalAveragePooling2D(name="avg_pool")(x)
+x = Dense(512, activation="relu", name="dense_1")(x)
+x = Dropout(0.3, name="dropout_1")(
+    x
+)  # Dropout un peu plus fort pour éviter overfitting
+x = Dense(256, activation="relu", name="dense_2")(x)
+x = Dropout(0.2, name="dropout_2")(x)
+output = Dense(n_class, activation="softmax", name="predictions")(x)
+
+# Construction du modèle complet
+model = Model(inputs=base_model.input, outputs=output)
+
+
+custom_model = Model(
+    inputs=base_model.input,
+    outputs=output,
+    name=f"{transfer_model_class.__name__}_custom",
 )
 
 
@@ -3737,10 +3775,99 @@ n_conv_layers_trainable = 0
 
 model, history, score = fit_transfer_model(
     base_model,
+    custom_model,
     train_generator,
     valid_generator,
     test_generator,
-    n_conv_layers_trainable=n_conv_layers_trainable,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 10
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 10 + 19
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 10 + 19 + 13
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+path = os.path.join(
+    PATH_KERAS,
+    f"{base_model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 10 + 19 + 13 + 10
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
     learning_rate=1e-4,
     nb_epochs=30,
 )
@@ -3849,53 +3976,166 @@ test_from_url(
 # ## DenseNet121
 
 # %%
-base_model = DenseNet121(
-    weights="imagenet", include_top=False
-)  # par défaut input_shape = (224,224,3)
-
-n_layers = len(base_model.layers)
-conv_layers = [layer for layer in base_model.layers if "conv" in layer.name]
-n_conv_layers = len(conv_layers)
-blocks = []
-for idx, layer in enumerate(conv_layers):
-    blocks.append(layer.name.split("_"))
-    print(layer.name)
-blocks = np.unique(blocks)
-n_blocks = len(blocks)
-
-
-print(f"{base_model.name} has {n_layers} layers in total")
-print(f"including {n_conv_layers} convolutional layers,")
-print(f"belonging to {n_blocks} blocks:")
-print(blocks)
-
-example = [
-    layer
-    for layer in base_model.layers
-    if "conv" in layer.name and "block" in layer.name
-][0]
-
-print("format:", example)
-
-target_size = (224, 224)  # optimal pour DenseNet
+transfer_model_class = DenseNet121
+target_size = analyze_transfer_model(
+    transfer_model_class, display_summary=True, display_model=True
+)
 
 
 # %%
 batch_size = 32
 
-train_generator, valid_generator, test_generator = DidDataGen(
+train_generator, valid_generator, test_generator = get_data_generators(
     PATH_TRAIN,
     PATH_VALID,
     PATH_TEST,
     dn_preprocess_input,
     target_size=target_size,
     batch_size=batch_size,
-    shear_range=0.2,
-    zoom_range=0.2,
-    rotation_range=359,
+    shear_range=0.15,
+    zoom_range=0.1,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    rotation_range=180,
     horizontal_flip=True,
     vertical_flip=True,
 )
+
+n_class = len(train_generator.class_indices)
+
+
+# %%
+base_model = transfer_model_class(
+    weights="imagenet", include_top=False, input_shape=(*target_size, 3)
+)
+
+x = base_model.output
+x = GlobalAveragePooling2D(name="avg_pool")(x)
+x = Dense(1024, activation="relu", name="dense_1")(x)
+x = Dropout(0.2, name="dropout_1")(x)
+x = Dense(512, activation="relu", name="dense_2")(x)
+x = Dropout(0.2, name="dropout_2")(x)
+output = Dense(n_class, activation="softmax", name="predictions")(x)
+
+
+# %%
+n_conv_layers_trainable = 0
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
+path = os.path.join(
+    PATH_KERAS,
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 33
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
+path = os.path.join(
+    PATH_KERAS,
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 33 + 49
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
+path = os.path.join(
+    PATH_KERAS,
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 33 + 49 + 25
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
+path = os.path.join(
+    PATH_KERAS,
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
+
+
+# %%
+n_conv_layers_trainable = 33 + 49 + 25 + 13
+
+model, history, score = fit_transfer_model(
+    base_model,
+    custom_model,
+    train_generator,
+    valid_generator,
+    test_generator,
+    n_conv_layers_trainable,
+    learning_rate=1e-4,
+    nb_epochs=30,
+)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+batch_size = train_generator.batch_size
+
+path = os.path.join(
+    PATH_KERAS,
+    f"{model.name}_layers_{n_conv_layers_trainable}_batch_{batch_size}_{timestamp}",
+)
+model.save(path + ".keras")
 
 
 # %%

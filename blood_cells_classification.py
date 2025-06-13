@@ -3759,10 +3759,6 @@ x = Dense(256, activation="relu", name="dense_2")(x)
 x = Dropout(0.2, name="dropout_2")(x)
 output = Dense(n_class, activation="softmax", name="predictions")(x)
 
-# Construction du modèle complet
-model = Model(inputs=base_model.input, outputs=output)
-
-
 custom_model = Model(
     inputs=base_model.input,
     outputs=output,
@@ -4017,6 +4013,12 @@ x = Dense(512, activation="relu", name="dense_2")(x)
 x = Dropout(0.2, name="dropout_2")(x)
 output = Dense(n_class, activation="softmax", name="predictions")(x)
 
+custom_model = Model(
+    inputs=base_model.input,
+    outputs=output,
+    name=f"{transfer_model_class.__name__}_custom",
+)
+
 
 # %%
 n_conv_layers_trainable = 0
@@ -4065,6 +4067,8 @@ path = os.path.join(
 )
 model.save(path + ".keras")
 
+
+# %%
 
 # %%
 n_conv_layers_trainable = 33 + 49

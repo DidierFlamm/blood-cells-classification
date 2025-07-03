@@ -1,4 +1,4 @@
-# Blood Cells Classification
+# 🩸 Blood Cells Classification
 
 ## Présentation
 
@@ -12,19 +12,23 @@ Une application Streamlit a été développée pour présenter les résultats et
 
 ## Contexte et réalisation
 
-Ce projet a été réalisé entre le 24 avril et le 4 juillet 2023, en groupe de 4 apprenants de la formation Data Scientist dispensée par Mines Paris PSL et DataScientest.com (promotion DS Bootcamp Avril 2023).
-
----
+Ce projet est basé sur le projet de fin d'études réalisé en groupe de 4 apprenants de la formation Data Scientist, dispensée par Mines Paris PSL – DataScientest.com (promotion DS Bootcamp Avril 2023).  
+Je l'ai entièrement retravaillé en Juillet 2025 pour le rendre _'grand public'_.
 
 ## Équipe
 
-- Didier FLAMM  
-- Ilyass SAIDI  
 - Jonathan CAMBON  
+- Didier FLAMM  
 - Mamadou HASSIMIOU BAH  
+- Ilyass SAIDI  
+
+## Encadrant
+
+- Khalil OUERTANI
 
 ---
 
-## Encadrement
+## Contact
 
-- Khalil OUERTANI
+Auteur : Didier Flamm  
+Date   : Juillet 2025
